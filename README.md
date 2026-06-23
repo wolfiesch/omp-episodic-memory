@@ -1,0 +1,98 @@
+# omp-episodic-memory
+
+Hybrid semantic + keyword search over [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts. It indexes past OMP conversations into a local SQLite database and exposes them through a CLI and MCP server, so an agent can recover prior decisions, solutions, and context across sessions.
+
+Read-only with respect to OMP state: it reads session JSONL files and writes only to its own index database.
+
+## Quick start
+
+```sh
+bun install
+bun run cli index
+bun run cli search "family tree research"
+bun run cli stats
+```
+
+The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/index.db`. Override it with `OMP_EPISODIC_DB` or `--db PATH`.
+
+## How it works
+
+| Stage | What happens |
+| --- | --- |
+| **Parse** | Walks `${OMP_SESSIONS_DIR:-~/.omp/agent/sessions}/**/*.jsonl`, assembling each user turn plus the assistant reply that followed into an `Exchange`. |
+| **Embed** | Uses `Xenova/all-MiniLM-L6-v2` (384-d) via `@xenova/transformers`. First run downloads the model if it is not already cached. No API keys are required. |
+| **Store** | Writes to a local SQLite database with FTS5 keyword tables and a `sqlite-vec` `vec0` vector table. |
+| **Search** | Fuses vector and keyword branches with Reciprocal Rank Fusion (RRF). Supports `both`, `vector`, and `text` modes. |
+
+## CLI
+
+```sh
+bun run cli index                              # index all sessions
+bun run cli search "sqlite-vec" --mode text    # keyword-only search
+bun run cli search "genealogy research" --json # machine-readable output
+bun run cli stats                              # index statistics
+```
+
+Flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--json`, `--db PATH`, `--sessions DIR`, `--max N`.
+
+Environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `OMP_EPISODIC_DB` | Index database path. |
+| `OMP_SESSIONS_DIR` | Default session corpus for CLI indexing. |
+| `OMP_EPISODIC_SESSIONS_DIR` | Root allowed by the MCP `read` tool. Set this if you index a non-default session directory. |
+| `XDG_DATA_HOME` | Base directory for the default index path. |
+
+## MCP server
+
+Build, then register in any harness that speaks MCP (Claude Code, Codex, Oh My Pi):
+
+```sh
+bun run build
+```
+
+```json
+{
+  "mcpServers": {
+    "omp-episodic-memory": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/omp-episodic-memory/dist/mcp-server.js"]
+    }
+  }
+}
+```
+
+Tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `search` | Hybrid retrieval over indexed sessions. Returns markdown or JSON. |
+| `read` | Reads a full session transcript by path, constrained to the configured sessions root. |
+
+The MCP server starts an embedding-model prewarm in the background. A first vector search can still be slow if the model cache is cold or the download has not finished; `mode: "text"` avoids the embedding path.
+
+## Requirements
+
+- Node.js 20+
+- Bun for local development commands
+- A platform supported by `better-sqlite3` and `sqlite-vec`
+- Network access on first embedding run unless the Transformers.js model is already cached
+
+## Layout
+
+| File | Role |
+| --- | --- |
+| `src/types.ts` | Shared contract and portable defaults. |
+| `src/parser.ts` | OMP JSONL to `Exchange[]` parser. See `FORMAT.md`. |
+| `src/db.ts` | SQLite schema, read-only open path, and upsert/re-embed writes. |
+| `src/embeddings.ts` | MiniLM embedding singleton with balanced user/assistant truncation. |
+| `src/indexer.ts` | Crawl, embed, upsert, and persist pipeline. |
+| `src/search.ts` | Hybrid RRF retrieval. |
+| `src/cli.ts` | `index`, `search`, and `stats`. |
+| `src/mcp-server.ts` | MCP stdio server with `search` and `read`. |
+
+## License
+
+MIT
