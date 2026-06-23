@@ -5,6 +5,10 @@
   "type": "module",
   "description": "Hybrid (semantic + keyword) search over Oh My Pi session transcripts",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wolfiesch/omp-episodic-memory.git"
+  },
   "engines": {
     "node": ">=20"
   },
