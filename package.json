@@ -12,8 +12,8 @@
     "node": ">=20"
   },
   "bin": {
-    "omp-episodic": "./dist/cli.js",
-    "omp-episodic-mcp": "./dist/mcp-server.js"
+    "omp-episodic": "dist/cli.js",
+    "omp-episodic-mcp": "dist/mcp-server.js"
   },
   "files": [
     "dist",
