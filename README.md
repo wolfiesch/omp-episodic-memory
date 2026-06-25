@@ -89,6 +89,8 @@ omp-episodic stats                              # index statistics
 | `graph` | Build or inspect the temporal project graph (entities and edges). |
 | `diff` | Show what derived memory changed since a given date. |
 | `eval` | Run the recall eval harness over a question/session fixture set. |
+| `context` | Show pinned project-context blocks plus recent approved decisions/gotchas/runbooks. |
+| `blocks` | Manage pinned project-context blocks (`list`, `set <kind>`, `rm <id>`). |
 
 Common flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--project P`, `--json`, `--db PATH`, `--sessions DIR`, `--max N`.
 
@@ -178,6 +180,9 @@ Tools:
 | --- | --- |
 | `search` | Hybrid retrieval over indexed sessions. Returns markdown or JSON. |
 | `read` | Reads a full session transcript by path, constrained to the configured sessions root. |
+| `recall_for_task` | Task-scoped evidence bundle with confidence tiers and explicit abstention. |
+| `list_gotchas` | Approved failure-mode memories for a project/task, so the agent avoids repeating a known mistake. |
+| `get_project_context` | Pinned project context plus recent approved decisions, gotchas, and runbooks. |
 
 The MCP server starts an embedding-model prewarm in the background. A first vector search can still be slow if the model cache is cold or the download has not finished; `mode: "text"` avoids the embedding path.
 
@@ -210,8 +215,9 @@ Tests run on Node's built-in test runner via `tsx` (`node --import tsx --test`).
 | `src/embeddings.ts` | MiniLM embedding singleton with balanced user/assistant truncation. |
 | `src/indexer.ts` | Crawl, embed, upsert, and persist pipeline. |
 | `src/search.ts` | Hybrid RRF retrieval. |
-| `src/cli.ts` | CLI commands: index, search, recall, stats, extract, inbox, approve, reject, memories, graph, diff, eval. |
-| `src/mcp-server.ts` | MCP stdio server with `search` and `read`. |
+| `src/cli.ts` | CLI commands: index, search, recall, stats, extract, inbox, approve, reject, memories, graph, diff, eval, context, blocks. |
+| `src/blocks.ts` | Pinned project-context blocks and the project-context aggregator. |
+| `src/mcp-server.ts` | MCP stdio server: `search`, `read`, `recall_for_task`, `list_gotchas`, `get_project_context`. |
 
 ## License
 
