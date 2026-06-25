@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-06-25
+
+### Fixed
+
+- `bin` paths no longer use a leading `./`, which npm's bin-path validator
+  rejected — silently dropping both `omp-episodic` and `omp-episodic-mcp`
+  binaries from the published package. First registry-publishable release.
+
 ## [1.0.0] - 2026-06-25
 
 ### Added
@@ -59,5 +67,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI (`omp-episodic`) with `index`, `search`, and `stats` commands.
 - MCP stdio server exposing read-only `search` and `read` tools.
 
+[1.0.1]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v1.0.1
 [1.0.0]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v1.0.0
 [0.1.0]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v0.1.0
