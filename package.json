@@ -1,6 +1,6 @@
 {
   "name": "omp-episodic-memory",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "Local-first experience memory for coding agents: forensic search + reviewable decisions, runbooks, and gotchas over Oh My Pi session transcripts",
   "license": "MIT",
@@ -30,7 +30,7 @@
     "prepack": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.25.2",
+    "@modelcontextprotocol/sdk": "1.26.0",
     "@xenova/transformers": "^2.17.2",
     "better-sqlite3": "^11.0.0",
     "sqlite-vec": "^0.1.6",
