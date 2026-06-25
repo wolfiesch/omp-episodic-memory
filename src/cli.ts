@@ -14,6 +14,9 @@ import {
   type MemoryType,
 } from "./memory.js";
 import { recallForTask, formatBundle, type RecallInclude } from "./recall.js";
+import { extractGraph } from "./graph-extract.js";
+import { findEdges, getGraphStats, type EdgeType } from "./graph.js";
+import { supersedeDecisions, memoryDiff } from "./supersede.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
 
 function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string> } {
@@ -252,6 +255,83 @@ function cmdMemories(positional: string[], flags: Map<string, string>): void {
   }
 }
 
+function cmdGraph(positional: string[], flags: Map<string, string>): void {
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const sub = positional[0];
+  if (sub === "build") {
+    process.stderr.write(`Building project graph in ${dbPath}...\n`);
+    const result = extractGraph({ dbPath, sessionsDir: flags.get("sessions") });
+    process.stdout.write(
+      `Graph updated: +${result.entitiesUpserted} entities, +${result.edgesUpserted} edges across ${result.sessionsScanned} session(s).\n`,
+    );
+    return;
+  }
+  const db = openDb(dbPath);
+  try {
+    if (sub === "edges") {
+      const edgeType = flags.get("type") as EdgeType | undefined;
+      const limit = flags.has("limit") ? Number(flags.get("limit")) : undefined;
+      const views = findEdges(db, { edgeType, openOnly: flags.get("open") === "true", limit });
+      if (flags.get("json") === "true") {
+        process.stdout.write(`${JSON.stringify(views, null, 2)}\n`);
+        return;
+      }
+      if (views.length === 0) {
+        process.stdout.write("No matching edges.\n");
+        return;
+      }
+      for (const v of views) {
+        const window = v.edge.validTo !== null ? ` [${v.edge.validFrom ?? "?"}..${v.edge.validTo}]` : "";
+        process.stdout.write(
+          `(${v.src.type}) ${v.src.name} --${v.edge.edgeType}--> (${v.dst.type}) ${v.dst.name}${window}\n`,
+        );
+      }
+      return;
+    }
+    // default: stats
+    const s = getGraphStats(db);
+    process.stdout.write(
+      `Graph: ${dbPath}\n  Entities:   ${s.entities}\n  Edges:      ${s.edges}\n  Open edges: ${s.openEdges}\n`,
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function cmdDiff(flags: Map<string, string>): void {
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const after = toEpochSeconds(flags.get("after"));
+  if (after === undefined) {
+    process.stderr.write("diff requires --after YYYY-MM-DD\n");
+    process.exitCode = 1;
+    return;
+  }
+  const db = openDb(dbPath);
+  try {
+    supersedeDecisions(db);
+    const diff = memoryDiff(db, { project: flags.get("project"), after });
+    if (flags.get("json") === "true") {
+      process.stdout.write(`${JSON.stringify(diff, null, 2)}\n`);
+      return;
+    }
+    const section = (label: string, recs: MemoryRecord[]): void => {
+      if (recs.length === 0) return;
+      process.stdout.write(`\n${label}:\n`);
+      for (const r of recs) process.stdout.write(`  - ${r.title}\n`);
+    };
+    process.stdout.write(
+      `Memory diff${diff.project ? ` for ${diff.project}` : ""} since ${flags.get("after")}:`,
+    );
+    section("New decisions", diff.newDecisions);
+    section("Superseded decisions", diff.supersededDecisions);
+    section("New gotchas", diff.newGotchas);
+    section("New runbooks", diff.newRunbooks);
+    process.stdout.write("\n");
+  } finally {
+    db.close();
+  }
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseFlags(rest);
@@ -283,6 +363,12 @@ async function main(): Promise<void> {
     case "memories":
       cmdMemories(positional, flags);
       break;
+    case "graph":
+      cmdGraph(positional, flags);
+      break;
+    case "diff":
+      cmdDiff(flags);
+      break;
     default:
       process.stderr.write(
         "omp-episodic <command>\n\n" +
@@ -295,7 +381,9 @@ async function main(): Promise<void> {
           "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--json]\n" +
           "  approve  <id> [--db PATH]                         Approve a derived memory\n" +
           "  reject   <id> [--db PATH] [--reason TEXT]         Reject a derived memory\n" +
-          "  memories <query> [--db PATH] [--type T] [--project P] [--status S] [--limit N] [--json]\n",
+          "  memories <query> [--db PATH] [--type T] [--project P] [--status S] [--limit N] [--json]\n" +
+          "  graph    [build|edges|stats] [--db PATH] [--sessions DIR] [--type T] [--open] [--limit N] [--json]\n" +
+          "  diff     --after YYYY-MM-DD [--db PATH] [--project P] [--json]\n",
       );
       process.exitCode = cmd ? 1 : 0;
   }

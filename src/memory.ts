@@ -293,6 +293,19 @@ export function updateMemoryStatus(
   return info.changes > 0;
 }
 
+/** Update the validity end (`valid_to`) of a record. Returns true if a row changed. */
+export function setMemoryValidTo(
+  db: Database.Database,
+  id: number,
+  validTo: number | null,
+): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db
+    .prepare(`UPDATE memory_records SET valid_to = ?, updated_at = ? WHERE id = ?`)
+    .run(validTo, now, id);
+  return info.changes > 0;
+}
+
 /** Fetch a single record (with sources) by id, or null. */
 export function getMemoryRecord(db: Database.Database, id: number): MemoryRecord | null {
   const row = db.prepare(`SELECT * FROM memory_records WHERE id = ?`).get(id) as

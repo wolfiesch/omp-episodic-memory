@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 import { DEFAULT_DB_PATH, EMBEDDING_DIM, type Exchange } from "./types.js";
 import { initMemorySchema } from "./memory.js";
+import { initGraphSchema } from "./graph.js";
 
 export function openDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -13,6 +14,7 @@ export function openDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
   db.pragma("journal_mode = WAL");
   initSchema(db);
   initMemorySchema(db);
+  initGraphSchema(db);
   return db;
 }
 
