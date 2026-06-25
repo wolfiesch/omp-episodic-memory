@@ -1,0 +1,7 @@
+{"id":"q-decision-sqlitevec","query":"Why did we choose sqlite-vec for the index?","category":"decision","expectedMemoryTitles":["sqlite-vec"],"expectedEpisodes":[{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":1}]}
+{"id":"q-procedural-publish","query":"How do we publish the package to npm?","category":"procedural","expectedMemoryTitles":["publish"],"expectedEpisodes":[{"sessionId":"bbbbbbbb-0000-7000-8000-000000000002","ordinal":0}]}
+{"id":"q-gotcha-dotenv","query":"What should we avoid when publishing to not leak credentials?","category":"gotcha","expectedMemoryTitles":["avoid",".env"]}
+{"id":"q-decision-embedding","query":"Which embedding model did we decide to use?","category":"decision","expectedMemoryTitles":["all-minilm","embeddings"],"expectedEpisodes":[{"sessionId":"cccccccc-0000-7000-8000-000000000003","ordinal":0}]}
+{"id":"q-exact-dyld","query":"the sqlite-vec dyld symbol error on macOS install","category":"exact","expectedEpisodes":[{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0}]}
+{"id":"q-abstain-supabase","query":"How do we integrate Supabase realtime websockets zzqqxx?","category":"abstain","mustAbstain":true}
+{"id":"q-abstain-kubernetes","query":"configure the kubernetes helm chart autoscaler quux","category":"abstain","mustAbstain":true}

@@ -26,6 +26,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "cli": "node --import tsx src/cli.ts",
+    "eval": "node --import tsx src/cli.ts eval",
     "prepack": "tsc -p tsconfig.json"
   },
   "dependencies": {

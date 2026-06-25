@@ -17,6 +17,7 @@ import { recallForTask, formatBundle, type RecallInclude } from "./recall.js";
 import { extractGraph } from "./graph-extract.js";
 import { findEdges, getGraphStats, type EdgeType } from "./graph.js";
 import { supersedeDecisions, memoryDiff } from "./supersede.js";
+import { runEval, formatEvalReport } from "./eval.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
 
 function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string> } {
@@ -332,6 +333,29 @@ function cmdDiff(flags: Map<string, string>): void {
   }
 }
 
+async function cmdEval(flags: Map<string, string>): Promise<void> {
+  const questionsPath = flags.get("questions");
+  if (!questionsPath) {
+    process.stderr.write("eval requires --questions PATH (a questions.jsonl file)\n");
+    process.exitCode = 1;
+    return;
+  }
+  const mode = (flags.get("mode") as SearchMode) ?? "text";
+  process.stderr.write(`Running eval (${mode} mode)...\n`);
+  const report = await runEval({
+    questionsPath,
+    dbPath: flags.get("db"),
+    sessionsDir: flags.get("sessions"),
+    mode,
+    build: flags.get("no-build") !== "true",
+  });
+  if (flags.get("json") === "true") {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${formatEvalReport(report)}\n`);
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseFlags(rest);
@@ -369,6 +393,9 @@ async function main(): Promise<void> {
     case "diff":
       cmdDiff(flags);
       break;
+    case "eval":
+      await cmdEval(flags);
+      break;
     default:
       process.stderr.write(
         "omp-episodic <command>\n\n" +
@@ -383,7 +410,8 @@ async function main(): Promise<void> {
           "  reject   <id> [--db PATH] [--reason TEXT]         Reject a derived memory\n" +
           "  memories <query> [--db PATH] [--type T] [--project P] [--status S] [--limit N] [--json]\n" +
           "  graph    [build|edges|stats] [--db PATH] [--sessions DIR] [--type T] [--open] [--limit N] [--json]\n" +
-          "  diff     --after YYYY-MM-DD [--db PATH] [--project P] [--json]\n",
+          "  diff     --after YYYY-MM-DD [--db PATH] [--project P] [--json]\n" +
+          "  eval     --questions PATH [--db PATH] [--sessions DIR] [--mode text|both|vector] [--no-build] [--json]\n",
       );
       process.exitCode = cmd ? 1 : 0;
   }
