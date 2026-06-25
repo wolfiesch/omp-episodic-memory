@@ -1,7 +1,6 @@
 {
   "name": "omp-episodic-memory",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Hybrid (semantic + keyword) search over Oh My Pi session transcripts",
   "license": "MIT",
@@ -13,7 +12,8 @@
     "node": ">=20"
   },
   "bin": {
-    "omp-episodic": "./dist/cli.js"
+    "omp-episodic": "./dist/cli.js",
+    "omp-episodic-mcp": "./dist/mcp-server.js"
   },
   "files": [
     "dist",
@@ -24,6 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "cli": "node --import tsx src/cli.ts",
     "prepack": "tsc -p tsconfig.json"
   },

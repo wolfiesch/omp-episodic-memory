@@ -4,13 +4,27 @@ Hybrid semantic + keyword search over [Oh My Pi](https://github.com/can1357/oh-m
 
 Read-only with respect to OMP state: it reads session JSONL files and writes only to its own index database.
 
+## Install
+
+Requires Node.js 20 or newer.
+
+```sh
+npm install -g omp-episodic-memory   # global CLI: omp-episodic
+```
+
+Or run without installing:
+
+```sh
+npx -y omp-episodic-memory index
+npx -y omp-episodic-memory search "family tree research"
+```
+
 ## Quick start
 
 ```sh
-bun install
-bun run cli index
-bun run cli search "family tree research"
-bun run cli stats
+omp-episodic index                       # index all sessions
+omp-episodic search "family tree research"
+omp-episodic stats
 ```
 
 The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/index.db`. Override it with `OMP_EPISODIC_DB` or `--db PATH`.
@@ -27,10 +41,10 @@ The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/
 ## CLI
 
 ```sh
-bun run cli index                              # index all sessions
-bun run cli search "sqlite-vec" --mode text    # keyword-only search
-bun run cli search "genealogy research" --json # machine-readable output
-bun run cli stats                              # index statistics
+omp-episodic index                              # index all sessions
+omp-episodic search "sqlite-vec" --mode text    # keyword-only search
+omp-episodic search "genealogy research" --json # machine-readable output
+omp-episodic stats                              # index statistics
 ```
 
 Flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--json`, `--db PATH`, `--sessions DIR`, `--max N`.
@@ -46,17 +60,39 @@ Environment:
 
 ## MCP server
 
-Build, then register in any harness that speaks MCP (Claude Code, Codex, Oh My Pi):
+The package ships a second binary, `omp-episodic-mcp` (`./dist/mcp-server.js`), that runs the MCP stdio server. Register it in any harness that speaks MCP (Claude Code, Codex, Oh My Pi).
 
-```sh
-bun run build
-```
+Using the published package via `npx` (the `-p` flag selects the named bin, since it differs from the package name):
 
 ```json
 {
   "mcpServers": {
     "omp-episodic-memory": {
-      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "-p", "omp-episodic-memory", "omp-episodic-mcp"]
+    }
+  }
+}
+```
+
+If installed globally (`npm install -g omp-episodic-memory`), the `omp-episodic-mcp` command is on your PATH:
+
+```json
+{
+  "mcpServers": {
+    "omp-episodic-memory": {
+      "command": "omp-episodic-mcp"
+    }
+  }
+}
+```
+
+For a local checkout, build first (`bun run build`) and point at the file directly:
+
+```json
+{
+  "mcpServers": {
+    "omp-episodic-memory": {
       "command": "node",
       "args": ["/absolute/path/to/omp-episodic-memory/dist/mcp-server.js"]
     }
@@ -72,6 +108,18 @@ Tools:
 | `read` | Reads a full session transcript by path, constrained to the configured sessions root. |
 
 The MCP server starts an embedding-model prewarm in the background. A first vector search can still be slow if the model cache is cold or the download has not finished; `mode: "text"` avoids the embedding path.
+
+## Development
+
+Local development uses [Bun](https://bun.sh):
+
+```sh
+bun install        # install dependencies
+bun run check      # type-check (tsc --noEmit)
+bun run test       # run the test suite
+```
+
+Tests run on Node's built-in test runner via `tsx` (`node --import tsx --test`).
 
 ## Requirements
 

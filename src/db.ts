@@ -108,7 +108,12 @@ export function insertExchange(db: Database.Database, ex: InsertableExchange): b
       toolNamesJson,
       rowid,
     );
-    db.prepare(`DELETE FROM exchanges_fts WHERE rowid = ?`).run(rowid);
+    // External-content FTS5 requires the special 'delete' command with the
+    // OLD indexed column values; a plain DELETE corrupts the index.
+    db.prepare(
+      `INSERT INTO exchanges_fts (exchanges_fts, rowid, user_text, assistant_text, tool_names)
+       VALUES ('delete', ?, ?, ?, ?)`,
+    ).run(rowid, existing.user_text, existing.assistant_text ?? "", existing.tool_names ?? "[]");
     db.prepare(`DELETE FROM exchanges_vec WHERE rowid = ?`).run(BigInt(rowid));
   } else {
     const insert = db
