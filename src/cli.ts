@@ -18,6 +18,14 @@ import { extractGraph } from "./graph-extract.js";
 import { findEdges, getGraphStats, type EdgeType } from "./graph.js";
 import { supersedeDecisions, memoryDiff } from "./supersede.js";
 import { runEval, formatEvalReport } from "./eval.js";
+import {
+  setBlock,
+  listBlocks,
+  deleteBlock,
+  getProjectContext,
+  BLOCK_KINDS,
+  type BlockKind,
+} from "./blocks.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
 
 function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string> } {
@@ -57,6 +65,7 @@ async function cmdIndex(flags: Map<string, string>): Promise<void> {
     dbPath,
     sessionsDir,
     maxFiles,
+    force: flags.get("force") === "true",
     onProgress: (p) => {
       if (p.fileIndex % 25 === 0 || p.fileIndex === p.totalFiles - 1) {
         process.stderr.write(
@@ -67,7 +76,7 @@ async function cmdIndex(flags: Map<string, string>): Promise<void> {
   });
   const secs = ((Date.now() - start) / 1000).toFixed(1);
   process.stderr.write(
-    `Done in ${secs}s: ${result.filesProcessed} files, ${result.exchangesUpserted} exchanges upserted.\n`,
+    `Done in ${secs}s: ${result.filesProcessed} files, ${result.exchangesUpserted} exchanges upserted, ${result.filesSkipped} skipped.\n`,
   );
 }
 
@@ -356,6 +365,82 @@ async function cmdEval(flags: Map<string, string>): Promise<void> {
   process.stdout.write(`${formatEvalReport(report)}\n`);
 }
 
+function cmdContext(flags: Map<string, string>): void {
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const db = openDb(dbPath);
+  try {
+    const ctx = getProjectContext(db, {
+      project: flags.get("project"),
+      limit: flags.has("limit") ? Number(flags.get("limit")) : undefined,
+    });
+    if (flags.get("json") === "true") {
+      process.stdout.write(`${JSON.stringify(ctx, null, 2)}\n`);
+      return;
+    }
+    process.stdout.write(`Project context${ctx.project ? ` for ${ctx.project}` : " (global)"}:\n`);
+    for (const b of ctx.blocks) {
+      process.stdout.write(`  [${b.kind}] ${b.content.replace(/\s+/g, " ").trim()}\n`);
+    }
+    const line = (label: string, recs: MemoryRecord[]): void => {
+      if (recs.length > 0) process.stdout.write(`  ${label}: ${recs.length}\n`);
+    };
+    line("decisions", ctx.recentDecisions);
+    line("gotchas", ctx.gotchas);
+    line("runbooks", ctx.runbooks);
+  } finally {
+    db.close();
+  }
+}
+
+function cmdBlocks(positional: string[], flags: Map<string, string>): void {
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const sub = positional[0];
+  const db = openDb(dbPath);
+  try {
+    if (sub === "set") {
+      const kind = positional[1] as BlockKind | undefined;
+      const content = flags.get("content");
+      if (!kind || !BLOCK_KINDS.includes(kind) || !content) {
+        process.stderr.write(
+          `blocks set <${BLOCK_KINDS.join("|")}> --content TEXT [--project P]\n`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      const id = setBlock(db, { kind, project: flags.get("project") ?? null, content });
+      process.stdout.write(`Set block [${id}] (${kind}).\n`);
+      return;
+    }
+    if (sub === "rm") {
+      const id = Number(positional[1]);
+      if (!Number.isInteger(id)) {
+        process.stderr.write("blocks rm <id>\n");
+        process.exitCode = 1;
+        return;
+      }
+      process.stdout.write(deleteBlock(db, id) ? `Removed block [${id}].\n` : `Block [${id}] not found.\n`);
+      return;
+    }
+    // default: list
+    const blocks = listBlocks(db, flags.get("project") ?? undefined);
+    if (flags.get("json") === "true") {
+      process.stdout.write(`${JSON.stringify(blocks, null, 2)}\n`);
+      return;
+    }
+    if (blocks.length === 0) {
+      process.stdout.write("No pinned blocks.\n");
+      return;
+    }
+    for (const b of blocks) {
+      process.stdout.write(
+        `[${b.id}] (${b.kind}) ${b.project ?? "global"}: ${b.content.replace(/\s+/g, " ").trim()}\n`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseFlags(rest);
@@ -396,11 +481,17 @@ async function main(): Promise<void> {
     case "eval":
       await cmdEval(flags);
       break;
+    case "context":
+      cmdContext(flags);
+      break;
+    case "blocks":
+      cmdBlocks(positional, flags);
+      break;
     default:
       process.stderr.write(
         "omp-episodic <command>\n\n" +
           "Commands:\n" +
-          "  index    [--db PATH] [--sessions DIR] [--max N]   Index OMP transcripts\n" +
+          "  index    [--db PATH] [--sessions DIR] [--max N] [--force]   Index OMP transcripts\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--include a,b,c] [--json]\n" +
           "  stats    [--db PATH]                              Show index statistics\n" +
@@ -411,7 +502,9 @@ async function main(): Promise<void> {
           "  memories <query> [--db PATH] [--type T] [--project P] [--status S] [--limit N] [--json]\n" +
           "  graph    [build|edges|stats] [--db PATH] [--sessions DIR] [--type T] [--open] [--limit N] [--json]\n" +
           "  diff     --after YYYY-MM-DD [--db PATH] [--project P] [--json]\n" +
-          "  eval     --questions PATH [--db PATH] [--sessions DIR] [--mode text|both|vector] [--no-build] [--json]\n",
+          "  eval     --questions PATH [--db PATH] [--sessions DIR] [--mode text|both|vector] [--no-build] [--json]\n" +
+          "  context  [--db PATH] [--project P] [--limit N] [--json]   Pinned blocks + recent memory\n" +
+          "  blocks   [list|set <kind>|rm <id>] [--db PATH] [--project P] [--content TEXT] [--json]\n",
       );
       process.exitCode = cmd ? 1 : 0;
   }

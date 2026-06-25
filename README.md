@@ -1,8 +1,33 @@
 # omp-episodic-memory
 
-Hybrid semantic + keyword search over [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts. It indexes past OMP conversations into a local SQLite database and exposes them through a CLI and MCP server, so an agent can recover prior decisions, solutions, and context across sessions.
+Local-first experience memory for coding agents: index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) (OMP) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas — without modifying OMP state.
 
-Read-only with respect to OMP state: it reads session JSONL files and writes only to its own index database.
+This is a forensic and experience memory over your actual coding sessions. It reads the session JSONL files already on disk and writes only to its own local index database. Every result traces back to the exact conversation and exchange that produced it, so you can answer questions like "where did we solve this before", "what did the agent actually say", and "which session decided X".
+
+Read-only with respect to OMP state: it never edits, compresses, or curates OMP's own memory. It indexes the raw transcripts and exposes them through a CLI and an MCP server.
+
+## Why not just use OMP memory?
+
+OMP's built-in memory is curated and compressed — a distilled view optimized for the agent's working context. That is useful, but it is lossy: the original wording, the dead ends, and the precise moment a decision was made are gone.
+
+This tool takes the opposite stance. It indexes the **raw transcripts** as they sit on disk and gives you provenance back to the exact conversation and exchange. Use it to answer:
+
+- Where did we solve this before?
+- What did the agent actually say (verbatim), not the summary?
+- Which session decided X, and what was the reasoning at the time?
+
+The index is read-only with respect to OMP state. Derived memory (decisions, gotchas, runbooks) is proposed into a separate reviewable inbox — nothing is asserted into your knowledge base without an explicit approve step.
+
+This is not a competitor to general-purpose agent memory frameworks (Mem0, Zep, Letta) or to OMP-native curation (Hindsight). Its lane is narrow on purpose: raw-transcript provenance plus reviewable derived memory for OMP coding sessions.
+
+## What it does
+
+- **Hybrid search** — FTS5 keyword retrieval and `sqlite-vec` vector retrieval fused with Reciprocal Rank Fusion (RRF). Modes: `both`, `vector`, `text`.
+- **Typed, reviewable derived memory** — decisions, gotchas, and runbooks extracted from transcripts into an approve/reject inbox. Nothing enters the knowledge base without review.
+- **`recall_for_task` evidence bundles** — task-scoped retrieval that returns supporting evidence with a confidence score and abstains when the index has nothing relevant, rather than fabricating an answer.
+- **Temporal project graph** — entities and time-bounded edges, with decision supersession and a memory diff to see what changed since a given date.
+- **Pinned project-context blocks** — durable, project-scoped context surfaced alongside recall.
+- **Recall eval harness** — a reproducible benchmark over question/session fixtures that reports recall, ranking, abstention, and latency metrics as a regression guardrail.
 
 ## Install
 
@@ -37,17 +62,35 @@ The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/
 | **Embed** | Uses `Xenova/all-MiniLM-L6-v2` (384-d) via `@xenova/transformers`. First run downloads the model if it is not already cached. No API keys are required. |
 | **Store** | Writes to a local SQLite database with FTS5 keyword tables and a `sqlite-vec` `vec0` vector table. |
 | **Search** | Fuses vector and keyword branches with Reciprocal Rank Fusion (RRF). Supports `both`, `vector`, and `text` modes. |
+| **Derive** | Extracts typed memory (decisions, gotchas, runbooks) into a reviewable inbox; builds a temporal entity/edge graph with supersession. |
 
 ## CLI
 
 ```sh
 omp-episodic index                              # index all sessions
 omp-episodic search "sqlite-vec" --mode text    # keyword-only search
-omp-episodic search "genealogy research" --json # machine-readable output
+omp-episodic recall "fix flaky vector search"   # task-scoped evidence bundle
 omp-episodic stats                              # index statistics
 ```
 
-Flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--json`, `--db PATH`, `--sessions DIR`, `--max N`.
+### Command reference
+
+| Command | Description |
+| --- | --- |
+| `index` | Index OMP transcripts into the local SQLite database. |
+| `search` | Hybrid search over indexed exchanges (`--mode both\|vector\|text`). |
+| `recall` | Build a task-scoped evidence bundle with confidence and abstention. |
+| `stats` | Show index statistics (exchanges, sessions, date range). |
+| `extract` | Propose typed derived memories (decisions/gotchas/runbooks) into the inbox. |
+| `inbox` | List derived memories by status (pending/approved/rejected/superseded). |
+| `approve` | Approve a pending derived memory by id. |
+| `reject` | Reject a derived memory by id, with an optional reason. |
+| `memories` | Search approved/derived memories by query, type, project, or status. |
+| `graph` | Build or inspect the temporal project graph (entities and edges). |
+| `diff` | Show what derived memory changed since a given date. |
+| `eval` | Run the recall eval harness over a question/session fixture set. |
+
+Common flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--project P`, `--json`, `--db PATH`, `--sessions DIR`, `--max N`.
 
 Environment:
 
@@ -57,6 +100,35 @@ Environment:
 | `OMP_SESSIONS_DIR` | Default session corpus for CLI indexing. |
 | `OMP_EPISODIC_SESSIONS_DIR` | Root allowed by the MCP `read` tool. Set this if you index a non-default session directory. |
 | `XDG_DATA_HOME` | Base directory for the default index path. |
+
+## Benchmarks
+
+The `eval` command runs a reproducible recall benchmark over a fixture set of questions and sessions:
+
+```sh
+omp-episodic eval --questions <file> --sessions <dir> --mode text
+```
+
+It builds (or reuses, with `--no-build`) an index from the fixtures, runs each question through recall, and reports:
+
+| Metric | Meaning |
+| --- | --- |
+| **Recall@1 / Recall@5** | Fraction of questions whose expected source appears in the top 1 / top 5 results. |
+| **MRR** | Mean reciprocal rank of the expected source. |
+| **Abstention accuracy** | Fraction of unanswerable questions on which recall correctly abstains. |
+| **False-positive rate** | Fraction of unanswerable questions answered anyway (confident when it should abstain). |
+| **p50 / p95 latency** | Median and tail per-query latency. |
+
+Current baseline on the bundled synthetic fixtures (text mode):
+
+| Metric | Result |
+| --- | --- |
+| Recall@5 | 100% |
+| Abstention accuracy | 100% |
+| False-positive rate | 0% |
+| p50 latency | sub-millisecond |
+
+These numbers are on small synthetic fixtures. They are a regression guardrail to catch retrieval/abstention regressions, not a leaderboard claim about real-world corpora.
 
 ## MCP server
 
@@ -138,7 +210,7 @@ Tests run on Node's built-in test runner via `tsx` (`node --import tsx --test`).
 | `src/embeddings.ts` | MiniLM embedding singleton with balanced user/assistant truncation. |
 | `src/indexer.ts` | Crawl, embed, upsert, and persist pipeline. |
 | `src/search.ts` | Hybrid RRF retrieval. |
-| `src/cli.ts` | `index`, `search`, and `stats`. |
+| `src/cli.ts` | CLI commands: index, search, recall, stats, extract, inbox, approve, reject, memories, graph, diff, eval. |
 | `src/mcp-server.ts` | MCP stdio server with `search` and `read`. |
 
 ## License

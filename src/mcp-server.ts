@@ -17,11 +17,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { openReadOnlyDb } from "./db.js";
+import { openDb, openReadOnlyDb } from "./db.js";
 import { initEmbeddings } from "./embeddings.js";
 import { parseSessionFile } from "./parser.js";
 import { search } from "./search.js";
 import { recallForTask, formatBundle } from "./recall.js";
+import { searchMemoryRecords, type MemoryRecord } from "./memory.js";
+import { getProjectContext, type ProjectContext } from "./blocks.js";
 import { DEFAULT_DB_PATH, DEFAULT_SESSIONS_DIR, type SearchHit } from "./types.js";
 
 const DB_PATH = process.env.OMP_EPISODIC_DB ?? DEFAULT_DB_PATH;
@@ -55,6 +57,23 @@ const RecallInputSchema = z
     max_context_tokens: z.number().min(100).max(8000).default(2000),
     after: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     before: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    response_format: z.enum(["markdown", "json"]).default("markdown"),
+  })
+  .strict();
+
+const GotchasInputSchema = z
+  .object({
+    query: z.string().optional(),
+    project: z.string().optional(),
+    limit: z.number().min(1).max(50).default(10),
+    response_format: z.enum(["markdown", "json"]).default("markdown"),
+  })
+  .strict();
+
+const ProjectContextInputSchema = z
+  .object({
+    project: z.string().optional(),
+    limit: z.number().min(1).max(20).default(5),
     response_format: z.enum(["markdown", "json"]).default("markdown"),
   })
   .strict();
@@ -101,6 +120,38 @@ function formatHits(hits: SearchHit[], query: string): string {
   return lines.join("\n");
 }
 
+function formatMemoryRecord(r: MemoryRecord): string {
+  const src = r.sources[0];
+  const loc = src ? ` — ${src.sourcePath}#${src.ordinal}` : "";
+  const body = r.body.replace(/\s+/g, " ").trim().slice(0, 240);
+  return `- (${r.type}, conf ${r.confidence.toFixed(2)}) ${r.title}${loc}\n  ${body}`;
+}
+
+function formatGotchas(records: MemoryRecord[]): string {
+  if (records.length === 0) return "No gotchas found.";
+  return [`Found ${records.length} gotcha(s):`, "", ...records.map(formatMemoryRecord)].join("\n");
+}
+
+function formatProjectContext(ctx: ProjectContext): string {
+  const lines: string[] = [`# Project context${ctx.project ? `: ${ctx.project}` : " (global)"}`, ""];
+  if (ctx.blocks.length > 0) {
+    lines.push("## Pinned blocks");
+    for (const b of ctx.blocks) lines.push(`- [${b.kind}] ${b.content.replace(/\s+/g, " ").trim()}`);
+    lines.push("");
+  }
+  const section = (label: string, recs: MemoryRecord[]): void => {
+    if (recs.length === 0) return;
+    lines.push(`## ${label}`);
+    for (const r of recs) lines.push(formatMemoryRecord(r));
+    lines.push("");
+  };
+  section("Recent decisions", ctx.recentDecisions);
+  section("Gotchas", ctx.gotchas);
+  section("Runbooks", ctx.runbooks);
+  if (lines.length <= 2) lines.push("No pinned context or derived memories yet.");
+  return lines.join("\n").trim();
+}
+
 function formatConversation(
   path: string,
   startLine?: number,
@@ -129,7 +180,7 @@ function formatConversation(
 }
 
 const server = new Server(
-  { name: "omp-episodic-memory", version: "0.1.0" },
+  { name: "omp-episodic-memory", version: "1.0.0" },
   { capabilities: { tools: {} } },
 );
 
@@ -212,6 +263,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         openWorldHint: false,
       },
     },
+    {
+      name: "list_gotchas",
+      description:
+        "List failure-mode memories (gotchas) for a project or task before acting, so the agent avoids repeating a prior mistake. Returns approved gotcha records with provenance.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          project: { type: "string" },
+          limit: { type: "number", minimum: 1, maximum: 50, default: 10 },
+          response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "List Gotchas",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
+    {
+      name: "get_project_context",
+      description:
+        "Return pinned project context (rules, workflow preferences, known risks, positioning) plus recent approved decisions, gotchas, and runbooks for a project. Use at the start of work in a repo.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          project: { type: "string" },
+          limit: { type: "number", minimum: 1, maximum: 20, default: 5 },
+          response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Get Project Context",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -263,6 +357,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
+    if (name === "list_gotchas") {
+      const params = GotchasInputSchema.parse(args);
+      const db = openReadOnlyDb(DB_PATH);
+      try {
+        const records = searchMemoryRecords(db, {
+          query: params.query,
+          type: "gotcha",
+          project: params.project,
+          status: "approved",
+          limit: params.limit,
+        });
+        const text =
+          params.response_format === "json"
+            ? JSON.stringify({ gotchas: records, count: records.length }, null, 2)
+            : formatGotchas(records);
+        return { content: [{ type: "text", text }] };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === "get_project_context") {
+      const params = ProjectContextInputSchema.parse(args);
+      const db = openReadOnlyDb(DB_PATH);
+      try {
+        const ctx = getProjectContext(db, { project: params.project, limit: params.limit });
+        const text =
+          params.response_format === "json"
+            ? JSON.stringify(ctx, null, 2)
+            : formatProjectContext(ctx);
+        return { content: [{ type: "text", text }] };
+      } finally {
+        db.close();
+      }
+    }
+
     if (name === "read") {
       const params = ReadInputSchema.parse(args);
       const path = resolveSessionPath(params.path);
@@ -281,6 +411,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 async function main(): Promise<void> {
   console.error("omp-episodic-memory MCP server running via stdio");
+  // Migrate: if the index DB already exists, open it writable once so any
+  // schemas added in newer versions (memory/graph/blocks) are created before
+  // we serve read-only queries against pre-existing DBs.
+  if (existsSync(DB_PATH)) {
+    try {
+      openDb(DB_PATH).close();
+    } catch (error) {
+      console.error("Schema migration skipped:", error instanceof Error ? error.message : String(error));
+    }
+  }
   void initEmbeddings().catch((error) => {
     console.error("Embedding prewarm failed:", error instanceof Error ? error.message : String(error));
   });

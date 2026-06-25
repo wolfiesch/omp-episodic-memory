@@ -1,8 +1,9 @@
 // Crawl OMP session transcripts, embed each exchange, and persist to the index DB.
 // All logging goes to stderr; progress is reported via the onProgress callback.
-import { readdirSync, type Dirent } from "node:fs";
+import { readdirSync, statSync, type Dirent } from "node:fs";
 import { join } from "node:path";
 
+import Database from "better-sqlite3";
 import {
   insertExchange,
   openDb,
@@ -49,29 +50,71 @@ export interface IndexOptions {
   dbPath?: string;
   sessionsDir?: string;
   maxFiles?: number;
+  force?: boolean;
   onProgress?: (p: IndexProgress) => void;
 }
 
 export interface IndexResult {
   filesProcessed: number;
+  filesSkipped: number;
   exchangesUpserted: number;
+}
+
+interface IndexedFileRow {
+  mtime_ms: number;
+}
+
+/** Create the table that tracks which files have been indexed and at what mtime. */
+export function ensureIndexStateTable(db: Database.Database): void {
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS indexed_files (path TEXT PRIMARY KEY, mtime_ms INTEGER NOT NULL, indexed_at INTEGER NOT NULL)`,
+  );
+}
+
+/** Decide whether a file needs (re)indexing given its stored vs current mtime. */
+export function shouldIndexFile(
+  storedMtimeMs: number | undefined,
+  currentMtimeMs: number,
+  force?: boolean,
+): boolean {
+  if (force) return true;
+  if (storedMtimeMs === undefined) return true;
+  return storedMtimeMs !== currentMtimeMs;
 }
 
 export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
   const db = openDb(opts.dbPath);
   try {
     await initEmbeddings();
+    ensureIndexStateTable(db);
 
     let files = findSessionFiles(opts.sessionsDir);
     if (opts.maxFiles !== undefined) {
       files = files.slice(0, opts.maxFiles);
     }
 
+    const selectMtime = db.prepare(
+      `SELECT mtime_ms FROM indexed_files WHERE path = ?`,
+    );
+    const upsertMtime = db.prepare(
+      `INSERT INTO indexed_files (path, mtime_ms, indexed_at) VALUES (?,?,?)
+       ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, indexed_at=excluded.indexed_at`,
+    );
+
     let filesProcessed = 0;
+    let filesSkipped = 0;
     let exchangesUpserted = 0;
 
     for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
       const file = files[fileIndex];
+
+      const mtimeMs = statSync(file).mtimeMs;
+      const storedRow = selectMtime.get(file) as IndexedFileRow | undefined;
+      if (!shouldIndexFile(storedRow?.mtime_ms, mtimeMs, opts.force)) {
+        filesSkipped++;
+        continue;
+      }
+
       const exchanges = parseSessionFile(file);
 
       // Compute embeddings first (async); better-sqlite3 transactions cannot span await.
@@ -91,6 +134,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         for (const ins of insertables) {
           if (insertExchange(db, ins)) inserted++;
         }
+        upsertMtime.run(file, mtimeMs, Date.now());
         return inserted;
       });
 
@@ -105,7 +149,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       });
     }
 
-    return { filesProcessed, exchangesUpserted };
+    return { filesProcessed, filesSkipped, exchangesUpserted };
   } finally {
     db.close();
   }

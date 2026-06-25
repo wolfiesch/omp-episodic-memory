@@ -1,8 +1,8 @@
 {
   "name": "omp-episodic-memory",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Hybrid (semantic + keyword) search over Oh My Pi session transcripts",
+  "description": "Local-first experience memory for coding agents: forensic search + reviewable decisions, runbooks, and gotchas over Oh My Pi session transcripts",
   "license": "MIT",
   "repository": {
     "type": "git",
