@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Typed derived-memory layer (`memory_records`): reviewable `decision`, `gotcha`,
+  `runbook`, `fact`, `preference`, and `project_state` records with required
+  provenance back to source exchanges, idempotent upsert keyed on
+  `(type, title, project)`, FTS5 search, and a status lifecycle
+  (`pending`/`approved`/`rejected`/`superseded`) where pending records are
+  excluded from retrieval by default.
+- Heuristic, network-free extractor that distills decisions, gotchas, and
+  runbooks from raw episodes into pending memory records.
+- CLI review inbox: `extract`, `inbox`, `approve`, `reject`, and `memories`
+  commands.
+- `recall_for_task` engine: intent-routed retrieval over episodes and approved
+  derived memories returning a confidence-tiered, provenance-backed evidence
+  bundle with a token-budgeted suggested context and explicit abstention when
+  nothing relevant exists. Exposed as a CLI `recall` command and an MCP
+  `recall_for_task` tool.
+
+### Fixed
+
+- External-content FTS5 updates now use the `'delete'` command with the old
+  column values instead of `DELETE … WHERE rowid`, preventing
+  `SQLITE_CORRUPT_VTAB` on re-indexing changed exchanges.
+
 ## [0.1.0] - 2026-06-25
 
 ### Added

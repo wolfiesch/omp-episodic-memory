@@ -21,6 +21,7 @@ import { openReadOnlyDb } from "./db.js";
 import { initEmbeddings } from "./embeddings.js";
 import { parseSessionFile } from "./parser.js";
 import { search } from "./search.js";
+import { recallForTask, formatBundle } from "./recall.js";
 import { DEFAULT_DB_PATH, DEFAULT_SESSIONS_DIR, type SearchHit } from "./types.js";
 
 const DB_PATH = process.env.OMP_EPISODIC_DB ?? DEFAULT_DB_PATH;
@@ -42,6 +43,19 @@ const ReadInputSchema = z
     path: z.string().min(1),
     startLine: z.number().min(1).optional(),
     endLine: z.number().min(1).optional(),
+  })
+  .strict();
+
+const RecallInputSchema = z
+  .object({
+    task: z.string().min(3),
+    project: z.string().optional(),
+    include: z.array(z.enum(["episodes", "memories", "runbooks", "gotchas", "decisions"])).optional(),
+    mode: z.enum(["vector", "text", "both"]).default("both"),
+    max_context_tokens: z.number().min(100).max(8000).default(2000),
+    after: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    before: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    response_format: z.enum(["markdown", "json"]).default("markdown"),
   })
   .strict();
 
@@ -168,6 +182,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         openWorldHint: false,
       },
     },
+    {
+      name: "recall_for_task",
+      description:
+        "Before starting a coding task, retrieve an evidence-backed context packet from prior OMP sessions — distilled decisions, runbooks, and gotchas plus raw episode citations, with a confidence tier and explicit abstention when nothing relevant exists.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          task: { type: "string", minLength: 3 },
+          project: { type: "string" },
+          include: {
+            type: "array",
+            items: { type: "string", enum: ["episodes", "memories", "runbooks", "gotchas", "decisions"] },
+          },
+          mode: { type: "string", enum: ["vector", "text", "both"], default: "both" },
+          max_context_tokens: { type: "number", minimum: 100, maximum: 8000, default: 2000 },
+          after: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+          before: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+          response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" },
+        },
+        required: ["task"],
+        additionalProperties: false,
+      },
+      annotations: {
+        title: "Recall Prior Experience",
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    },
   ],
 }));
 
@@ -190,6 +234,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           params.response_format === "json"
             ? JSON.stringify({ results: hits, count: hits.length, mode: params.mode }, null, 2)
             : formatHits(hits, params.query);
+        return { content: [{ type: "text", text }] };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === "recall_for_task") {
+      const params = RecallInputSchema.parse(args);
+      const db = openReadOnlyDb(DB_PATH);
+      try {
+        const bundle = await recallForTask(db, {
+          task: params.task,
+          project: params.project,
+          include: params.include,
+          mode: params.mode,
+          maxContextTokens: params.max_context_tokens,
+          after: toEpochSeconds(params.after),
+          before: toEpochSeconds(params.before),
+        });
+        const text =
+          params.response_format === "json"
+            ? JSON.stringify(bundle, null, 2)
+            : formatBundle(bundle);
         return { content: [{ type: "text", text }] };
       } finally {
         db.close();

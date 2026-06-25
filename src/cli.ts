@@ -13,6 +13,7 @@ import {
   type MemoryStatus,
   type MemoryType,
 } from "./memory.js";
+import { recallForTask, formatBundle, type RecallInclude } from "./recall.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
 
 function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string> } {
@@ -108,6 +109,38 @@ async function cmdSearch(positional: string[], flags: Map<string, string>): Prom
         `   ${h.sourcePath} (exchange ${h.ordinal})\n\n`,
     );
   });
+}
+
+async function cmdRecall(positional: string[], flags: Map<string, string>): Promise<void> {
+  const task = positional.join(" ").trim();
+  if (!task) {
+    process.stderr.write("Usage: omp-episodic recall <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--include a,b,c] [--json]\n");
+    process.exitCode = 1;
+    return;
+  }
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const db = openReadOnlyDb(dbPath);
+  const mode = (flags.get("mode") as SearchMode) ?? "both";
+  const includeRaw = flags.get("include");
+  const include = includeRaw
+    ? (includeRaw.split(",").map((s) => s.trim()).filter(Boolean) as RecallInclude[])
+    : undefined;
+  const bundle = await recallForTask(db, {
+    task,
+    project: flags.get("project"),
+    include,
+    mode,
+    maxContextTokens: flags.has("tokens") ? Number(flags.get("tokens")) : undefined,
+    after: toEpochSeconds(flags.get("after")),
+    before: toEpochSeconds(flags.get("before")),
+  });
+  db.close();
+
+  if (flags.get("json") === "true") {
+    process.stdout.write(JSON.stringify(bundle, null, 2) + "\n");
+    return;
+  }
+  process.stdout.write(formatBundle(bundle) + "\n");
 }
 
 function cmdStats(flags: Map<string, string>): void {
@@ -229,6 +262,9 @@ async function main(): Promise<void> {
     case "search":
       await cmdSearch(positional, flags);
       break;
+    case "recall":
+      await cmdRecall(positional, flags);
+      break;
     case "stats":
       cmdStats(flags);
       break;
@@ -253,6 +289,7 @@ async function main(): Promise<void> {
           "Commands:\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N]   Index OMP transcripts\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--json]\n" +
+          "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--include a,b,c] [--json]\n" +
           "  stats    [--db PATH]                              Show index statistics\n" +
           "  extract  [--db PATH] [--sessions DIR] [--since YYYY-MM-DD] [--project P] [--max N]\n" +
           "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--json]\n" +
