@@ -178,12 +178,101 @@ test("query matching long assistant reply yields combined U+A snippet with non-e
   // Combined labeled excerpt: assistant evidence is surfaced (not just the user command).
   assert.ok(hit.snippet.includes("A: "), `snippet should include assistant evidence, got: ${hit.snippet}`);
   assert.ok(
-    hit.snippet.includes("This is a known gotcha:"),
-    `snippet should carry assistant content, got: ${hit.snippet}`,
+    hit.snippet.includes("sqlite-vec"),
+    `snippet should carry query-matched assistant content, got: ${hit.snippet}`,
   );
   assert.ok(hit.assistantSnippet, "assistantSnippet should be non-empty");
-  assert.ok(hit.assistantSnippet.startsWith("This is a known gotcha:"), `assistantSnippet should start with content, got: ${hit.assistantSnippet}`);
+  assert.ok(hit.assistantSnippet.includes("sqlite-vec"), `assistantSnippet should include the match, got: ${hit.assistantSnippet}`);
   assert.ok(hit.userSnippet, "userSnippet should also be set");
+});
+
+test("snippets center the matching assistant evidence", async () => {
+  const sessionId = "deep-assistant-match-0000-7000-8000-000000000006";
+  insertExchange(db, {
+    sessionId,
+    sourcePath: "/tmp/deep-assistant-match.jsonl",
+    title: "Deep assistant match",
+    cwd: "/tmp",
+    ordinal: 0,
+    timestamp: 1_783_000_000,
+    userText: "brief prompt",
+    assistantText: `${"filler ".repeat(80)} npm 403 token policy requires automation token`,
+    toolNames: [],
+    toolEvents: [],
+    embedding: fakeEmbedding(300),
+  });
+
+  const hits = await search(db, { query: "npm token policy", mode: "text" });
+  const hit = hits.find((h) => h.sessionId === sessionId);
+  assert.ok(hit, "expected deep assistant match");
+  assert.match(hit.snippet, /npm 403 token policy/);
+  assert.match(hit.assistantSnippet ?? "", /npm 403 token policy/);
+});
+
+test("snippet centering ignores short stopwords", async () => {
+  const sessionId = "stopword-centering-0000-7000-8000-000000000007";
+  insertExchange(db, {
+    sessionId,
+    sourcePath: "/tmp/stopword-centering.jsonl",
+    title: "Stopword centering",
+    cwd: "/tmp",
+    ordinal: 0,
+    timestamp: 1_783_000_001,
+    userText: "how do we handle the next task",
+    assistantText: `do we proceed with filler ${"filler ".repeat(80)} publish npm package with provenance`,
+    toolNames: [],
+    toolEvents: [],
+    embedding: fakeEmbedding(301),
+  });
+
+  const hits = await search(db, { query: "How do we publish to npm?", mode: "text" });
+  const hit = hits.find((h) => h.sessionId === sessionId);
+  assert.ok(hit, "expected stopword centering hit");
+  assert.match(hit.snippet, /publish npm package/);
+});
+
+test("snippet centering preserves meaningful short acronyms", async () => {
+  const sessionId = "short-acronym-centering-0000-7000-8000-000000000008";
+  insertExchange(db, {
+    sessionId,
+    sourcePath: "/tmp/short-acronym-centering.jsonl",
+    title: "Short acronym centering",
+    cwd: "/tmp",
+    ordinal: 0,
+    timestamp: 1_783_000_002,
+    userText: "debug the renderer",
+    assistantText: `preface ${"filler ".repeat(80)} CI UI DB checks expose the renderer issue`,
+    toolNames: [],
+    toolEvents: [],
+    embedding: fakeEmbedding(302),
+  });
+
+  const hits = await search(db, { query: "CI UI DB", mode: "text" });
+  const hit = hits.find((h) => h.sessionId === sessionId);
+  assert.ok(hit, "expected short acronym hit");
+  assert.match(hit.snippet, /CI UI DB checks/);
+});
+
+test("short-token centering uses token boundaries", async () => {
+  const sessionId = "short-token-boundary-0000-7000-8000-000000000009";
+  insertExchange(db, {
+    sessionId,
+    sourcePath: "/tmp/short-token-boundary.jsonl",
+    title: "Short token boundary",
+    cwd: "/tmp",
+    ordinal: 0,
+    timestamp: 1_783_000_003,
+    userText: "language choice",
+    assistantText: `ongoing background filler ${"filler ".repeat(80)} Go runtime support is required`,
+    toolNames: [],
+    toolEvents: [],
+    embedding: fakeEmbedding(303),
+  });
+
+  const hits = await search(db, { query: "Go", mode: "text" });
+  const hit = hits.find((h) => h.sessionId === sessionId);
+  assert.ok(hit, "expected short token boundary hit");
+  assert.match(hit.snippet, /Go runtime support/);
 });
 
 test("text search matches tool result output", async () => {

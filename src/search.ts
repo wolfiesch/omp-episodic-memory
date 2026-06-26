@@ -22,6 +22,12 @@ interface ExchangeRow {
   tool_events: string | null;
 }
 
+/** Split a raw query into word tokens, matching FTS5's tokenizer boundaries. */
+const WORD_SPLIT = /[^\p{L}\p{N}_]+/u;
+function splitWords(query: string): string[] {
+  return query.split(WORD_SPLIT).filter((t) => t.length > 0);
+}
+
 /**
  * Turn a raw natural-language query into an FTS5-safe MATCH expression:
  * split on whitespace, strip FTS5 special characters, quote each token,
@@ -31,11 +37,65 @@ function sanitizeFtsQuery(query: string): string {
   // Split on any run of non-alphanumeric characters so hyphenated/punctuated
   // input (e.g. "sqlite-vec") yields the same tokens FTS5 indexed ("sqlite",
   // "vec") rather than one untokenizable blob ("sqlitevec").
-  const tokens = query
-    .split(/[^\p{L}\p{N}_]+/u)
-    .filter((t) => t.length > 0)
-    .map((t) => `"${t}"`);
-  return tokens.join(" OR ");
+  return splitWords(query)
+    .map((t) => `"${t}"`)
+    .join(" OR ");
+}
+
+const SNIPPET_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "do",
+  "did",
+  "for",
+  "how",
+  "is",
+  "of",
+  "the",
+  "to",
+  "we",
+  "what",
+  "when",
+  "where",
+  "why",
+  "with",
+]);
+
+const SINGLE_CHAR_SNIPPET_TOKENS = new Set(["c", "r"]);
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function tokenPosition(text: string, token: string): number {
+  if (token.length <= 2) {
+    const match = new RegExp(`(^|[^\\p{L}\\p{N}_])(${escapeRegExp(token)})(?=$|[^\\p{L}\\p{N}_])`, "u").exec(text);
+    return match ? match.index + match[1].length : -1;
+  }
+  return text.indexOf(token);
+}
+
+
+function queryTokens(query: string): string[] {
+  return splitWords(query)
+    .map((t) => t.toLowerCase())
+    .filter((t) => !SNIPPET_STOPWORDS.has(t) && (t.length > 1 || SINGLE_CHAR_SNIPPET_TOKENS.has(t)))
+    .sort((a, b) => b.length - a.length);
+}
+
+function excerptAroundMatch(text: string, tokens: string[], maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const lower = text.toLowerCase();
+  const positions = tokens
+    .map((token) => tokenPosition(lower, token))
+    .filter((pos) => pos >= 0);
+  if (positions.length === 0) return text.slice(0, maxChars);
+  const matchAt = Math.min(...positions);
+  const start = Math.max(0, matchAt - Math.floor(maxChars / 3));
+  const excerpt = text.slice(start, start + maxChars);
+  return `${start > 0 ? "…" : ""}${excerpt}${start + maxChars < text.length ? "…" : ""}`;
 }
 
 function vectorSearch(db: Database.Database, qv: Float32Array, k: number): number[] {
@@ -87,6 +147,8 @@ export async function search(
     : hasDateFilter
       ? Math.max(limit * 20, 500)
       : Math.max(limit * 5, 50);
+
+  const tokens = queryTokens(opts.query);
 
   // Per-branch ordered id lists (best first).
   let vectorIds: number[] = [];
@@ -142,8 +204,8 @@ export async function search(
     // Combined labeled excerpt: keep user intent AND assistant evidence visible.
     // Assistant gets the larger share since that's where substance lives.
     const parts: string[] = [];
-    if (userPart) parts.push("U: " + userPart.slice(0, 100));
-    if (asstPart) parts.push("A: " + asstPart.slice(0, 200));
+    if (userPart) parts.push("U: " + excerptAroundMatch(userPart, tokens, 100));
+    if (asstPart) parts.push("A: " + excerptAroundMatch(asstPart, tokens, 200));
     for (const event of toolEvents.slice(0, 2)) parts.push("T: " + formatToolEventSummary(event, 120));
     const snippet = parts.length > 0 ? parts.join(" | ") : "";
 
@@ -161,8 +223,8 @@ export async function search(
       ordinal: row.ordinal,
       timestamp: row.timestamp,
       snippet,
-      userSnippet: userPart.slice(0, 200),
-      assistantSnippet: asstPart.slice(0, 200),
+      userSnippet: excerptAroundMatch(userPart, tokens, 200),
+      assistantSnippet: excerptAroundMatch(asstPart, tokens, 200),
       toolEvents,
       score: finalScore,
       vectorRank: vectorRanks.get(id) ?? null,
