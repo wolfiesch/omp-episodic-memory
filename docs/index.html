@@ -11,6 +11,17 @@
   <meta property="og:title" content="omp-episodic-memory — Forensic Experience Memory">
   <meta property="og:description" content="Local-first experience memory for coding agents. Index raw Oh My Pi transcripts, recall decisions, runbooks, and gotchas.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://omp.wolfie.gg/">
+  <meta property="og:image" content="https://omp.wolfie.gg/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="omp-episodic-memory — Forensic Experience Memory">
+  <meta name="twitter:description" content="Local-first experience memory for coding agents. Index raw Oh My Pi transcripts, recall decisions, runbooks, and gotchas.">
+  <meta name="twitter:image" content="https://omp.wolfie.gg/og-image.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -161,7 +172,21 @@
   <header class="w-full border-b border-zinc-200 dark:border-zinc-800/50 sticky top-0 z-50 bg-white/80 dark:bg-zinc-950/80 backdrop-filter backdrop-blur-md">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <span class="text-2xl">🧠</span>
+        <svg class="w-7 h-7" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="navmark" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#06b6d4"/>
+              <stop offset="0.5" stop-color="#6366f1"/>
+              <stop offset="1" stop-color="#8b5cf6"/>
+            </linearGradient>
+          </defs>
+          <g stroke="url(#navmark)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="32" cy="20" r="6"/>
+            <circle cx="18" cy="42" r="6"/>
+            <circle cx="46" cy="42" r="6"/>
+            <path d="M32 26 L18 36 M32 26 L46 36 M24 42 L40 42"/>
+          </g>
+        </svg>
         <span class="font-bold text-lg tracking-tight bg-gradient-to-r from-brand-cyan via-brand-indigo to-brand-purple bg-clip-text text-transparent">
           omp-episodic-memory
         </span>
@@ -201,13 +226,13 @@
     </p>
 
     <!-- Installation & Buttons -->
-    <div class="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-lg mx-auto mb-16">
-      <div class="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 font-mono text-sm w-full text-left relative group">
-        <span class="text-brand-cyan flex items-center gap-2">
-          <span>$</span>
-          <span class="text-zinc-300 select-all" id="npm-install-text">npm install -g omp-episodic-memory</span>
+    <div class="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-3xl mx-auto mb-16">
+      <div class="flex items-center justify-between gap-3 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 font-mono text-sm w-full sm:w-auto sm:flex-1 text-left relative group overflow-hidden">
+        <span class="text-brand-cyan flex items-center gap-2 min-w-0 overflow-x-auto">
+          <span class="shrink-0">$</span>
+          <span class="text-zinc-300 select-all whitespace-nowrap" id="npm-install-text">npm install -g omp-episodic-memory</span>
         </span>
-        <button onclick="copyInstallCmd()" class="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Copy to clipboard">
+        <button onclick="copyInstallCmd()" class="shrink-0 text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Copy to clipboard">
           <svg id="copy-icon" class="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           <svg id="check-icon" class="w-4 h-4 fill-none stroke-emerald-400 hidden" viewBox="0 0 24 24" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
         </button>
@@ -254,6 +279,7 @@
             <div class="text-xs font-mono text-zinc-500 mb-2">02 / EMBED</div>
             <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">Transformers.js</h4>
             <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Generates local vectors via MiniLM-L6-v2 model. Zero API keys.</p>
+          </div>
           <div class="mt-4 text-xs font-mono text-brand-cyan bg-brand-cyan/10 py-1 px-2 rounded w-max">
             ONNX Runtime
           </div>
@@ -270,6 +296,7 @@
             <div class="text-xs font-mono text-zinc-500 mb-2">03 / INDEX</div>
             <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">SQLite SQLite-Vec</h4>
             <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Stores hybrid index: FTS5 for text and vec0 for vector embeddings.</p>
+          </div>
           <div class="mt-4 text-xs font-mono text-brand-purple bg-brand-purple/10 py-1 px-2 rounded w-max">
             Hybrid Store
           </div>
@@ -286,6 +313,7 @@
             <div class="text-xs font-mono text-zinc-500 mb-2">04 / FUSE</div>
             <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">RRF Search</h4>
             <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Combines FTS5 and vector matches into a unified ranked output.</p>
+          </div>
           <div class="mt-4 text-xs font-mono text-brand-emerald bg-brand-emerald/10 py-1 px-2 rounded w-max">
             RRF Formula
           </div>
@@ -302,6 +330,7 @@
       <nav class="toc" id="toc">
         <div class="toc-title">Contents</div>
         <a href="#why" class="toc-link">Why Episodic?</a>
+        <a href="#quick-start" class="toc-link">Quick Start</a>
         <a href="#features" class="toc-link">Core Features</a>
         <a href="#inbox-demo" class="toc-link">Interactive Inbox</a>
         <a href="#cli-playground" class="toc-link">CLI Playground</a>
@@ -316,7 +345,7 @@
         <!-- Section: Why -->
         <section id="why" class="sec-head">
           <div class="flex items-center gap-3 mb-6">
-            <span class="text-3xl">⚔️</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-indigo/10 flex items-center justify-center text-brand-indigo"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Why not just use built-in OMP memory?</h2>
           </div>
           <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed mb-6">
@@ -337,12 +366,52 @@
                 Every retrieved result from omp-episodic-memory links directly back to the source session JSONL, user prompt, and assistant code block that solved it. You can track decisions through time, compare options, and review changes on the fly.
               </p>
             </div>
+          </div>
+        </section>
+
+        <!-- Section: Quick Start -->
+        <section id="quick-start" class="sec-head">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-emerald/10 flex items-center justify-center text-brand-emerald"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg></span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Quick Start</h2>
+          </div>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">From install to your first provenance-backed recall in three commands.</p>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Step 1: index -->
+            <div class="glass-card rounded-xl p-6 flex flex-col gap-4">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-full bg-brand-cyan/10 text-brand-cyan font-mono font-bold flex items-center justify-center text-sm">1</span>
+                <h4 class="font-semibold text-zinc-900 dark:text-white">Index sessions</h4>
+              </div>
+              <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">Crawl your local Oh My Pi transcripts and build the hybrid SQLite index. Runs fully offline.</p>
+              <code class="block bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 font-mono text-xs text-zinc-300 overflow-x-auto whitespace-nowrap">$ omp-episodic index</code>
+            </div>
+            <!-- Step 2: search -->
+            <div class="glass-card rounded-xl p-6 flex flex-col gap-4">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-full bg-brand-indigo/10 text-brand-indigo font-mono font-bold flex items-center justify-center text-sm">2</span>
+                <h4 class="font-semibold text-zinc-900 dark:text-white">Search hybrid</h4>
+              </div>
+              <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">Query across keyword and vector space, fused with RRF. Every hit cites its source session.</p>
+              <code class="block bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 font-mono text-xs text-zinc-300 overflow-x-auto whitespace-nowrap">$ omp-episodic search "sqlite-vec build"</code>
+            </div>
+            <!-- Step 3: recall -->
+            <div class="glass-card rounded-xl p-6 flex flex-col gap-4">
+              <div class="flex items-center gap-3">
+                <span class="w-8 h-8 rounded-full bg-brand-purple/10 text-brand-purple font-mono font-bold flex items-center justify-center text-sm">3</span>
+                <h4 class="font-semibold text-zinc-900 dark:text-white">Recall for task</h4>
+              </div>
+              <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">Assemble a confidence-tiered evidence bundle for the task at hand — or abstain when unsure.</p>
+              <code class="block bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 font-mono text-xs text-zinc-300 overflow-x-auto whitespace-nowrap">$ omp-episodic recall "fix arm64 build"</code>
+            </div>
+          </div>
         </section>
 
         <!-- Section: Core Features -->
         <section id="features" class="sec-head">
           <div class="flex items-center gap-3 mb-2">
-            <span class="text-3xl">⚡</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-cyan/10 flex items-center justify-center text-brand-cyan"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Core Features</h2>
           </div>
           <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Modern, production-grade capabilities for professional coding environments</p>
@@ -430,7 +499,7 @@
         <!-- Section: Interactive Inbox Demo -->
         <section id="inbox-demo" class="sec-head">
           <div class="flex items-center gap-3 mb-2">
-            <span class="text-3xl">📬</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-cyan/10 flex items-center justify-center text-brand-cyan"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Interactive Memory Inbox</h2>
           </div>
           <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Try approving and rejecting derived candidate memories dynamically below</p>
@@ -517,9 +586,13 @@
                   <span class="text-xs font-mono text-zinc-500" id="approved-count">0 items approved</span>
                 </div>
                 
-                <div class="space-y-4 max-h-[360px] overflow-y-auto pr-1" id="approved-items">
-                  <div class="text-center py-12 text-zinc-600 text-xs" id="empty-approved-msg">
-                    Approved memories will appear here.
+                <div class="space-y-4 min-h-[300px] max-h-[360px] overflow-y-auto pr-1" id="approved-items">
+                  <div class="h-[300px] flex flex-col items-center justify-center text-center gap-3 px-6" id="empty-approved-msg">
+                    <span class="w-12 h-12 rounded-xl bg-brand-emerald/10 flex items-center justify-center text-brand-emerald">
+                      <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    </span>
+                    <p class="text-sm font-medium text-zinc-400">No approved memories yet</p>
+                    <p class="text-xs text-zinc-600 max-w-[220px] leading-relaxed">Approve a candidate on the left and it lands here — committed to the permanent index with full provenance.</p>
                   </div>
                 </div>
               </div>
@@ -530,7 +603,7 @@
         <!-- Section: CLI Playground -->
         <section id="cli-playground" class="sec-head">
           <div class="flex items-center gap-3 mb-2">
-            <span class="text-3xl">💻</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-purple/10 flex items-center justify-center text-brand-purple"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">CLI Command Center</h2>
           </div>
           <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Execute forensically precise search commands directly in the terminal</p>
@@ -544,7 +617,7 @@
                 <span class="w-3.5 h-3.5 rounded-full bg-green-500/20 border border-green-500/40"></span>
                 <span class="text-xs font-mono text-zinc-500 ml-2">omp-episodic-memory --help</span>
               </div>
-              <span class="text-[10px] font-mono text-zinc-600 dark:text-zinc-450">bash</span>
+              <span class="text-[10px] font-mono text-zinc-600 dark:text-zinc-400">bash</span>
             </div>
 
             <!-- Terminal Tabs -->
@@ -577,10 +650,10 @@ Done! Index size: 2.4 MB.
         <!-- Section: MCP Server Integration -->
         <section id="mcp-server" class="sec-head">
           <div class="flex items-center gap-3 mb-2">
-            <span class="text-3xl">🔌</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-indigo/10 flex items-center justify-center text-brand-indigo"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">MCP Server Configuration</h2>
           </div>
-          <p class="text-sm text-zinc-550 dark:text-zinc-400 mb-8">Register the server in your favorite agent harness to expose episodic memory tools</p>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Register the server in your favorite agent harness to expose episodic memory tools</p>
           <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Left Side: Config code blocks -->
             <div class="lg:col-span-2 flex flex-col gap-6">
@@ -640,10 +713,10 @@ Done! Index size: 2.4 MB.
         <!-- Section: Benchmarks -->
         <section id="benchmarks" class="sec-head">
           <div class="flex items-center gap-3 mb-2">
-            <span class="text-3xl">📊</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-emerald/10 flex items-center justify-center text-brand-emerald"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Gold Set Benchmarks</h2>
           </div>
-          <p class="text-sm text-zinc-550 dark:text-zinc-400 mb-8">OMP-MemBench metrics verified on every pull request push. Baseline results on synthetic fixtures:</p>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">OMP-MemBench metrics verified on every pull request push. Baseline results on synthetic fixtures:</p>
           
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <!-- Stat 1 -->
@@ -680,7 +753,7 @@ Done! Index size: 2.4 MB.
         <!-- Section: Development -->
         <section id="development" class="sec-head">
           <div class="flex items-center gap-3 mb-6">
-            <span class="text-3xl">🛠️</span>
+            <span class="shrink-0 w-9 h-9 rounded-lg bg-brand-cyan/10 flex items-center justify-center text-brand-cyan"><svg class="w-5 h-5 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg></span>
             <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Local Development</h2>
           </div>
           <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed mb-6">
@@ -710,6 +783,19 @@ Done! Index size: 2.4 MB.
   <!-- Footer -->
   <footer class="w-full border-t border-zinc-900 bg-zinc-950 py-12 mt-20 relative select-none">
     <div class="max-w-7xl mx-auto px-4 text-center">
+      <div class="flex flex-wrap items-center justify-center gap-2 mb-6">
+        <img src="https://img.shields.io/npm/v/omp-episodic-memory?color=06b6d4&labelColor=18181b" alt="npm version" class="h-5">
+        <img src="https://img.shields.io/npm/dm/omp-episodic-memory?color=6366f1&labelColor=18181b" alt="npm downloads" class="h-5">
+        <img src="https://img.shields.io/github/license/wolfiesch/omp-episodic-memory?color=8b5cf6&labelColor=18181b" alt="license" class="h-5">
+        <img src="https://img.shields.io/badge/node-%3E%3D20-10b981?labelColor=18181b" alt="node version" class="h-5">
+        <img src="https://img.shields.io/badge/PRs-welcome-06b6d4?labelColor=18181b" alt="PRs welcome" class="h-5">
+      </div>
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 mb-6 text-sm">
+        <a href="https://github.com/wolfiesch/omp-episodic-memory" target="_blank" rel="noopener" class="text-zinc-400 hover:text-brand-cyan transition-colors">GitHub</a>
+        <a href="https://www.npmjs.com/package/omp-episodic-memory" target="_blank" rel="noopener" class="text-zinc-400 hover:text-brand-cyan transition-colors">npm</a>
+        <a href="https://github.com/wolfiesch/omp-episodic-memory/issues" target="_blank" rel="noopener" class="text-zinc-400 hover:text-brand-cyan transition-colors">Issues</a>
+        <a href="https://github.com/can1357/oh-my-pi" target="_blank" rel="noopener" class="text-zinc-400 hover:text-brand-cyan transition-colors">Oh My Pi</a>
+      </div>
       <p class="text-sm text-zinc-600">
         omp-episodic-memory © 2026. Released under the MIT License.
       </p>

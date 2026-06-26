@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>omp-episodic-memory — OG Card</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --cyan: #06b6d4;
+      --emerald: #10b981;
+      --indigo: #6366f1;
+      --purple: #8b5cf6;
+      --bg: #09090b;
+      --zinc-300: #d4d4d8;
+      --zinc-400: #a1a1aa;
+      --zinc-500: #71717a;
+      --zinc-700: #3f3f46;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+    }
+
+    .card {
+      position: relative;
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+      background: var(--bg);
+      background-image:
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.10) 0px, transparent 50%),
+        radial-gradient(at 50% 0%, rgba(6, 182, 212, 0.12) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.10) 0px, transparent 50%);
+      font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+      color: #fff;
+    }
+
+    /* Subtle grid line overlay */
+    .grid-lines {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+    }
+
+    /* Ambient glows */
+    .glow {
+      position: absolute;
+      border-radius: 9999px;
+      filter: blur(140px);
+      pointer-events: none;
+    }
+    .glow-cyan {
+      top: -180px;
+      left: 220px;
+      width: 560px;
+      height: 560px;
+      background: rgba(6, 182, 212, 0.16);
+    }
+    .glow-indigo {
+      bottom: -220px;
+      right: -100px;
+      width: 600px;
+      height: 600px;
+      background: rgba(99, 102, 241, 0.14);
+    }
+
+    /* 1px top accent gradient border */
+    .accent-border {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(to right, var(--cyan), var(--indigo), var(--purple));
+      z-index: 5;
+    }
+
+    .gradient-text {
+      background: linear-gradient(to right, var(--cyan), var(--indigo), var(--purple));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent;
+    }
+
+    /* Top bar */
+    .topbar {
+      position: absolute;
+      top: 52px;
+      left: 80px;
+      right: 80px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      z-index: 2;
+    }
+    .mark {
+      width: 56px;
+      height: 56px;
+      flex-shrink: 0;
+    }
+    .wordmark {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 30px;
+      letter-spacing: -0.01em;
+    }
+    .pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--zinc-400);
+      padding: 5px 14px;
+      border-radius: 9999px;
+      border: 1px solid var(--zinc-700);
+      background: rgba(39, 39, 42, 0.4);
+    }
+
+    /* Headline block */
+    .headline-block {
+      position: absolute;
+      top: 196px;
+      left: 80px;
+      right: 80px;
+      z-index: 2;
+    }
+    .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.22em;
+      color: var(--cyan);
+      margin-bottom: 22px;
+    }
+    .headline {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 72px;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      color: #fff;
+      margin-bottom: 26px;
+    }
+    .subline {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 400;
+      font-size: 26px;
+      line-height: 1.4;
+      color: var(--zinc-300);
+      max-width: 880px;
+    }
+
+    /* Bottom chips */
+    .chips {
+      position: absolute;
+      bottom: 56px;
+      left: 80px;
+      display: flex;
+      gap: 14px;
+      z-index: 2;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 16px;
+      font-weight: 500;
+      color: #e4e4e7;
+      padding: 11px 18px;
+      border-radius: 9999px;
+      background: rgba(24, 24, 27, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 9999px;
+      flex-shrink: 0;
+    }
+    .dot-cyan { background: var(--cyan); box-shadow: 0 0 8px rgba(6,182,212,0.7); }
+    .dot-indigo { background: var(--indigo); box-shadow: 0 0 8px rgba(99,102,241,0.7); }
+    .dot-purple { background: var(--purple); box-shadow: 0 0 8px rgba(139,92,246,0.7); }
+    .dot-emerald { background: var(--emerald); box-shadow: 0 0 8px rgba(16,185,129,0.7); }
+
+    /* Bottom-right url */
+    .url {
+      position: absolute;
+      bottom: 64px;
+      right: 80px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 17px;
+      font-weight: 500;
+      color: var(--zinc-500);
+      z-index: 2;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="grid-lines"></div>
+    <div class="glow glow-cyan"></div>
+    <div class="glow glow-indigo"></div>
+    <div class="accent-border"></div>
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="omp memory mark">
+        <defs>
+          <linearGradient id="markGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#06b6d4"/>
+            <stop offset="0.5" stop-color="#6366f1"/>
+            <stop offset="1" stop-color="#8b5cf6"/>
+          </linearGradient>
+        </defs>
+        <rect x="1.5" y="1.5" width="61" height="61" rx="15" fill="#09090b" stroke="url(#markGrad)" stroke-width="1.5" stroke-opacity="0.5"/>
+        <g fill="none" stroke="url(#markGrad)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="32" cy="20" r="6"/>
+          <circle cx="18" cy="42" r="6"/>
+          <circle cx="46" cy="42" r="6"/>
+          <path d="M32 26 L18 36 M32 26 L46 36 M24 42 L40 42"/>
+        </g>
+        <circle cx="32" cy="20" r="2.4" fill="#06b6d4"/>
+        <circle cx="18" cy="42" r="2.4" fill="#10b981"/>
+        <circle cx="46" cy="42" r="2.4" fill="#8b5cf6"/>
+      </svg>
+      <span class="wordmark gradient-text">omp-episodic-memory</span>
+      <span class="pill">v1.1.0</span>
+    </div>
+
+    <!-- Headline -->
+    <div class="headline-block">
+      <div class="eyebrow">100% Offline · Local-First</div>
+      <h1 class="headline">
+        Forensic Experience Memory<br>
+        <span class="gradient-text">for Coding Agents</span>
+      </h1>
+      <p class="subline">Index raw Oh My Pi transcripts &rarr; recall provenance-backed decisions, runbooks &amp; gotchas.</p>
+    </div>
+
+    <!-- Bottom chips -->
+    <div class="chips">
+      <span class="chip"><span class="dot dot-cyan"></span>SQLite + sqlite-vec</span>
+      <span class="chip"><span class="dot dot-indigo"></span>Hybrid RRF Search</span>
+      <span class="chip"><span class="dot dot-purple"></span>MCP Server</span>
+      <span class="chip"><span class="dot dot-emerald"></span>Zero API Keys</span>
+    </div>
+
+    <!-- URL -->
+    <div class="url">omp.wolfie.gg</div>
+  </div>
+</body>
+</html>
