@@ -219,24 +219,16 @@
 
     <!-- Top bar -->
     <div class="topbar">
-      <svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="omp memory mark">
+      <svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="oh-my-pi mark">
         <defs>
           <linearGradient id="markGrad" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stop-color="#06b6d4"/>
-            <stop offset="0.5" stop-color="#6366f1"/>
-            <stop offset="1" stop-color="#8b5cf6"/>
+            <stop offset="0" stop-color="#ed4abf"/>
+            <stop offset="0.5" stop-color="#9b4dff"/>
+            <stop offset="1" stop-color="#5ad8e6"/>
           </linearGradient>
         </defs>
-        <rect x="1.5" y="1.5" width="61" height="61" rx="15" fill="#09090b" stroke="url(#markGrad)" stroke-width="1.5" stroke-opacity="0.5"/>
-        <g fill="none" stroke="url(#markGrad)" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="32" cy="20" r="6"/>
-          <circle cx="18" cy="42" r="6"/>
-          <circle cx="46" cy="42" r="6"/>
-          <path d="M32 26 L18 36 M32 26 L46 36 M24 42 L40 42"/>
-        </g>
-        <circle cx="32" cy="20" r="2.4" fill="#06b6d4"/>
-        <circle cx="18" cy="42" r="2.4" fill="#10b981"/>
-        <circle cx="46" cy="42" r="2.4" fill="#8b5cf6"/>
+        <rect width="64" height="64" rx="12" fill="#0f0a14"/>
+        <path fill="url(#markGrad)" d="M14 16h36v8H40v32h-8V24h-6v22h-8V24h-4z"/>
       </svg>
       <span class="wordmark gradient-text">omp-episodic-memory</span>
       <span class="pill">v1.1.0</span>
