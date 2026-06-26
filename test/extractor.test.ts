@@ -22,6 +22,21 @@ const FIXTURES_DIR = join(
 function allFixtureExchanges() {
   return findSessionFiles(FIXTURES_DIR).flatMap((f) => parseSessionFile(f));
 }
+function exchangeWithAssistant(assistantText: string) {
+  return {
+    sessionId: "real-noise-sample",
+    sourcePath: "/tmp/session.jsonl",
+    title: "Noise sample",
+    cwd: "/tmp/project",
+    ordinal: 0,
+    timestamp: 1_782_000_000,
+    userText: "summarize progress",
+    assistantText,
+    toolNames: [],
+    toolEvents: [],
+  };
+}
+
 
 test("extractFromExchanges yields decision and gotcha records with correct provenance and project", () => {
   const exchanges = allFixtureExchanges();
@@ -32,8 +47,8 @@ test("extractFromExchanges yields decision and gotcha records with correct prove
   assert.ok(decisions.length >= 1, "expected >=1 decision record");
   assert.ok(gotchas.length >= 1, "expected >=1 gotcha record");
 
-  // Decisions match the "We decided to use ..." sentences.
-  assert.ok(decisions.every((r) => /we decided to/i.test(r.body)));
+  // Decisions match durable decision phrasing, not arbitrary status headings.
+  assert.ok(decisions.every((r) => /\b(?:decided|chose|agreed)\b|\bdecision\s+(?:is|was|to)\b/i.test(r.body)));
   // Gotchas match the documented cautionary/failure vocabulary.
   assert.ok(
     gotchas.every((r) =>
@@ -64,6 +79,49 @@ test("every proposed record is well-formed", () => {
     assert.ok(rec.confidence >= 0 && rec.confidence <= 1);
     assert.ok(rec.sources.length >= 1);
   }
+});
+
+test("extractFromExchanges ignores transient task constraints as gotchas", () => {
+  const records = extractFromExchanges([
+    exchangeWithAssistant("Do not edit anything. Do not run project-wide tests or formatters. Do not run gates or formatters."),
+  ]);
+  assert.equal(records.some((record) => record.type === "gotcha"), false);
+});
+
+test("extractFromExchanges ignores table rows and coordination as gotchas", () => {
+  const records = extractFromExchanges([
+    exchangeWithAssistant("| Issue | Root cause is documented | Auth boundary. I’ll only update docs and avoid installer changes."),
+  ]);
+  assert.equal(records.some((record) => record.type === "gotcha"), false);
+});
+
+test("extractFromExchanges ignores status headings as gotchas and decisions", () => {
+  const records = extractFromExchanges([
+    exchangeWithAssistant("# Acceptance Report merge-likelihood heuristics and PR anti-patterns to avoid.\n\n## Likely patch area\n\nStart with files.\n\nDecision: reproduce first.\n\nChanged:\n- Fixed issue\n\nNote: auth error."),
+  ]);
+  assert.equal(records.some((record) => record.type === "gotcha"), false);
+  assert.equal(records.some((record) => record.type === "decision"), false);
+});
+
+test("extractFromExchanges keeps durable gotchas with specific technical object", () => {
+  const records = extractFromExchanges([
+    exchangeWithAssistant("Do not edit the generated sqlite-vec bindings directly."),
+  ]);
+  assert.equal(records.some((record) => record.type === "gotcha"), true);
+});
+
+test("extractFromExchanges ignores status-summary lists as runbooks", () => {
+  const records = extractFromExchanges([
+    exchangeWithAssistant("Timestamp: 06/17/2026 04:04 AM PDT. Done. Next steps: 1. Opened the PR. 2. Added screenshots. 3. Waiting for review."),
+  ]);
+  assert.equal(records.some((record) => record.type === "runbook"), false);
+});
+
+test("extractFromExchanges keeps procedural runbooks with explicit steps", () => {
+  const records = extractFromExchanges([
+    exchangeWithAssistant("Runbook for publishing: 1. Inspect the package. 2. Run npm publish --dry-run. 3. Publish."),
+  ]);
+  assert.equal(records.some((record) => record.type === "runbook"), true);
 });
 
 let dbPath: string;

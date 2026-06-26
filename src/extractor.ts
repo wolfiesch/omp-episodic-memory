@@ -9,11 +9,16 @@ import { parseSessionFile } from "./parser.js";
 import type { Exchange } from "./types.js";
 
 /** Matches decision statements like "We decided to use sqlite-vec ...". */
-const DECISION_RE = /\bwe (?:decided|chose|will use|agreed)\b|\bdecision\b/i;
+const DECISION_RE = /\b(?:we\s+)?(?:decided|chose|agreed)\b|\bwe will use\b|\bdecision\s+(?:is|was|to)\b/i;
 /** Matches cautionary statements like "Avoid ..." / "Do not ..." / "... fails". */
 const GOTCHA_RE = /\b(?:avoid|do not|don['’]t|never|gotcha|fails?|failed|error)\b/i;
 /** Matches an ordered step marker (start-of-line or inline "N."). */
 const STEP_RE = /(?:^|\n)\s*\d+\.\s|\s\d+\.\s/g;
+/** Matches text that frames a numbered list as reusable procedure. */
+const RUNBOOK_CUE_RE = /\b(?:runbook|procedure|recipe|how to|follow(?:\s+these)?\s+steps?)\b/i;
+/** Transient coordination instructions are not durable gotchas. */
+const TRANSIENT_GOTCHA_RE =
+  /^(?:do not|don't|never)\s+(?:edit(?:\s+(?:anything|files?))?|modify\s+files?|run\s+(?:commands?|tests?|gates?(?:\s+or\s+formatters)?|any\s+gates?|project-wide\s+tests?(?:\s+or\s+formatters)?|tests?\s+or\s+(?:commands?|formatters)))(?:\.)?$/i;
 
 /** Split text into trimmed, non-empty sentences on terminal punctuation. */
 function splitSentences(text: string): string[] {
@@ -33,6 +38,33 @@ function titleFrom(sentence: string): string {
 function countSteps(text: string): number {
   const matches = text.match(STEP_RE);
   return matches ? matches.length : 0;
+}
+
+function isTransientGotcha(sentence: string): boolean {
+  const normalized = sentence.replace(/\s+/gu, " ").trim();
+  return (
+    TRANSIENT_GOTCHA_RE.test(normalized) ||
+    /^you already have the plan; never read it\.?$/i.test(normalized)
+  );
+}
+
+function isNoisyGotcha(sentence: string): boolean {
+  const normalized = sentence.replace(/\s+/gu, " ").trim();
+  return /^(?:\||#+\s|non-goals?:|changed:|verified:|note:)/i.test(normalized) || /^[“"]?I[’']?ll\b/i.test(normalized);
+}
+
+function isNoisyDecision(sentence: string): boolean {
+  const normalized = sentence.replace(/\s+/gu, " ").trim();
+  return /^(?:\||#+\s|likely patch area|changed:|verified:|note:|decision:\s*(?:reproduce|investigate|check|read|review|fix|update|continue|proceed|start)\b)/i.test(normalized);
+}
+
+function isNoisyRunbookLead(sentence: string): boolean {
+  const normalized = sentence.replace(/\s+/gu, " ").trim();
+  return /^(?:timestamp:|done\.?$|completed\b|read-only investigation complete\.?$|pr opened:)/i.test(normalized);
+}
+
+function hasRunbookCue(text: string): boolean {
+  return RUNBOOK_CUE_RE.test(text);
 }
 
 /**
@@ -96,19 +128,21 @@ export function extractWithExplanations(exchanges: Exchange[]): ExtractCandidate
     // Decisions + gotchas: scan both user and assistant text, sentence by sentence.
     for (const text of [ex.userText, ex.assistantText]) {
       for (const sentence of splitSentences(text)) {
-        if (DECISION_RE.test(sentence)) {
+        if (DECISION_RE.test(sentence) && !isNoisyDecision(sentence)) {
           add("decision", titleFrom(sentence), sentence, 0.7, "decision", sentence);
-        } else if (GOTCHA_RE.test(sentence)) {
+        } else if (GOTCHA_RE.test(sentence) && !isTransientGotcha(sentence) && !isNoisyGotcha(sentence)) {
           add("gotcha", titleFrom(sentence), sentence, 0.6, "gotcha", sentence);
         }
       }
     }
 
     // Runbook: an assistant reply with an ordered step list (>=2 steps).
-    if (countSteps(ex.assistantText) >= 2) {
+    if (countSteps(ex.assistantText) >= 2 && hasRunbookCue(ex.assistantText)) {
       const firstSentence = splitSentences(ex.assistantText)[0] ?? ex.assistantText;
-      const title = titleFrom(firstSentence);
-      add("runbook", title, ex.assistantText.trim(), 0.65, "runbook", firstSentence);
+      if (!isNoisyRunbookLead(firstSentence)) {
+        const title = titleFrom(firstSentence);
+        add("runbook", title, ex.assistantText.trim(), 0.65, "runbook", firstSentence);
+      }
     }
   }
   return out;
