@@ -31,8 +31,8 @@ test("runBench keeps targets non-blocking", async () => {
     mode: "text",
   });
   assert.equal(report.gatePassed, true, "all gate floors should be met");
-  const target = report.checks.find((c) => c.name === "extract-precision-target");
-  assert.ok(target, "extract-precision-target check should exist");
+  const target = report.checks.find((c) => c.name === "recall@1-target");
+  assert.ok(target, "recall@1-target check should exist");
   assert.equal(target.tier, "target");
 });
 
