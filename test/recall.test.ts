@@ -116,6 +116,85 @@ test("unrelated/nonsense task abstains with no evidence", async () => {
   assert.deepEqual(bundle.evidence, []);
 });
 
+test("exact single identifier token can answer when present", async () => {
+  const bundle = await recallForTask(db, {
+    task: "sqlite-vec",
+    mode: "text",
+  });
+
+  assert.equal(bundle.answerable, true);
+  assert.ok(bundle.evidence.length >= 1);
+});
+
+test("single identifier match does not hide a missing nonce", async () => {
+  const bundle = await recallForTask(db, {
+    task: "sqlite-vec zzqqxx",
+    mode: "text",
+  });
+
+  assert.equal(bundle.confidence, "abstain");
+  assert.equal(bundle.answerable, false);
+  assert.deepEqual(bundle.evidence, []);
+});
+
+test("vector fallback abstains when only generic project words overlap", async () => {
+  insertExchange(
+    db,
+    toInsertable(
+      {
+        sessionId: "generic-project-only",
+        sourcePath: "/tmp/generic-project-only.jsonl",
+        title: "Generic project planning",
+        cwd: "/Users/dev/generic",
+        ordinal: 0,
+        timestamp: 1_700_000_000,
+        userText: "continue project work",
+        assistantText: "Project notes and project planning only.",
+        toolNames: [],
+      },
+      999,
+    ),
+  );
+
+  const bundle = await recallForTask(db, {
+    task: "configure kubernetes helm chart autoscaler quux for this project",
+    mode: "both",
+  });
+
+  assert.equal(bundle.confidence, "abstain");
+  assert.equal(bundle.answerable, false);
+  assert.deepEqual(bundle.evidence, []);
+});
+
+test("vector fallback abstains when only generic action verbs overlap", async () => {
+  insertExchange(
+    db,
+    toInsertable(
+      {
+        sessionId: "generic-action-only",
+        sourcePath: "/tmp/generic-action-only.jsonl",
+        title: "Generic integration workflow",
+        cwd: "/Users/dev/generic",
+        ordinal: 0,
+        timestamp: 1_700_000_001,
+        userText: "integrate configure install continue workflow",
+        assistantText: "Integration workflow notes without any product-specific evidence.",
+        toolNames: [],
+      },
+      1000,
+    ),
+  );
+
+  const bundle = await recallForTask(db, {
+    task: "How do we integrate Supabase realtime websockets zzqqxx?",
+    mode: "both",
+  });
+
+  assert.equal(bundle.confidence, "abstain");
+  assert.equal(bundle.answerable, false);
+  assert.deepEqual(bundle.evidence, []);
+});
+
 test("suggestedContext respects the token budget", async () => {
   const small = await recallForTask(db, {
     task: "Why did we choose sqlite-vec for the index?",

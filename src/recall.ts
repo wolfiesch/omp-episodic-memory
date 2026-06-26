@@ -110,6 +110,26 @@ const STOPWORDS: Record<string, true> = {
   if: true, then: true, else: true, so: true, just: true, only: true,
 };
 
+const GENERIC_SIGNAL_TOKENS: Record<string, true> = {
+  code: true,
+  continue: true,
+  command: true,
+  configure: true,
+  install: true,
+  integrate: true,
+  fix: true,
+  history: true,
+  issue: true,
+  package: true,
+  project: true,
+  repo: true,
+  task: true,
+  test: true,
+  update: true,
+  user: true,
+  work: true,
+};
+
 /**
  * Lowercased content tokens (length >= 3, not stopwords) that carry retrieval
  * signal. Used to gate ORed FTS/vector hits so unrelated tasks abstain.
@@ -122,6 +142,24 @@ function significantTokens(text: string): string[] {
     seen.add(tok);
   }
   return [...seen];
+}
+
+function isRequiredEvidenceToken(token: string): boolean {
+  const rareLetters = token.match(/[qxz]/g)?.length ?? 0;
+  return token.includes("-") || token.includes("_") || rareLetters >= 2;
+}
+
+function hasEnoughTokenOverlap(taskTokens: string[], text: string): boolean {
+  const hay = text.toLowerCase();
+  const matches = taskTokens.filter((tok) => hay.includes(tok));
+  const required = taskTokens.filter(isRequiredEvidenceToken);
+  if (required.length > 0 && !required.every((tok) => matches.includes(tok))) return false;
+  if (required.length > 0) return true;
+
+  const strongTokens = taskTokens.filter((tok) => !GENERIC_SIGNAL_TOKENS[tok]);
+  const strongMatches = matches.filter((tok) => !GENERIC_SIGNAL_TOKENS[tok]);
+  if (strongMatches.length < 2) return false;
+  return strongMatches.length / Math.max(strongTokens.length, 1) >= 0.4;
 }
 
 function clip(text: string, maxChars: number): string {
@@ -277,10 +315,7 @@ export async function recallForTask(
   // shares a significant content token with the task; otherwise abstain.
   const taskTokens = significantTokens(opts.task);
   if (taskTokens.length > 0) {
-    const relevant = (text: string): boolean => {
-      const hay = text.toLowerCase();
-      return taskTokens.some((tok) => hay.includes(tok));
-    };
+    const relevant = (text: string): boolean => hasEnoughTokenOverlap(taskTokens, text);
     // `snippet` is only user_text; the search may have matched assistant_text or
     // tool names, so hydrate the full exchange text before gating an episode.
     const hydrateText = db.prepare(
