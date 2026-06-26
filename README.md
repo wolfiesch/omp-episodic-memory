@@ -186,10 +186,13 @@ Current baseline on the bundled synthetic fixtures (text mode):
 
 | Metric | Result |
 | --- | --- |
+| Scored recall questions | 30 |
 | Recall@5 | 100% |
-| Abstention accuracy | 100% |
-| False-positive rate | 0% |
-| p50 latency | sub-millisecond |
+| Abstention false-positive rate | 0% |
+| p95 latency | < 500ms |
+| Extraction precision | 92.6% |
+| Unlabeled extraction candidates | 0 |
+| Duplicate rate | 0% |
 
 These numbers are on small synthetic fixtures. They are a regression guardrail to catch retrieval/abstention regressions, not a leaderboard claim about real-world corpora.
 
@@ -202,20 +205,21 @@ benchmark together, scoring both against a two-tier threshold model:
 omp-episodic bench --questions <file> --sessions <dir> --labels <file> --mode text
 ```
 
-- **Gates** are CI-blocking floors (Recall@5 ≥ 85%, abstention-FP < 10%, p95 <
-  500ms, extraction precision ≥ 80%, duplicate rate < 10%). A failed gate exits
-  non-zero, so CI goes red.
+- **Gates** are CI-blocking floors: at least 30 scored recall questions,
+  Recall@5 ≥ 85%, abstention-FP < 10%, p95 < 500ms, extraction precision ≥
+  80%, zero unlabeled extraction candidates, and duplicate rate < 10%. A failed
+  gate exits non-zero, so CI goes red.
 - **Targets** are the aspirational SOTA bars (extraction precision ≥ 85%,
   Recall@1 ≥ 85%, MRR ≥ 0.80). They are reported with `→` when unmet but never
-  fail the build — they mark the gap you close by growing the gold set.
+  fail the build. They mark the gap you close by growing the gold set.
 
 CI runs this exact command on every push (see `.github/workflows/ci.yml`).
 
 ### Growing the extraction gold set on your real sessions
 
-The fixture precision baseline (83.3%) is measured on a tiny synthetic set. To
-measure — and improve — extraction quality on your **own** transcripts, label
-real candidates:
+The bundled fixture precision baseline is measured on a synthetic set. To
+measure and improve extraction quality on your **own** transcripts, label real
+candidates:
 
 1. Generate a labels template from your sessions (one row per extracted
    candidate, pre-filled `correct: true`):
