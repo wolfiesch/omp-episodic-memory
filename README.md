@@ -1,5 +1,7 @@
 # omp-episodic-memory
 
+[![CI](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg)](https://www.npmjs.com/package/omp-episodic-memory)
+
 Local-first experience memory for coding agents: index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) (OMP) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas — without modifying OMP state.
 
 This is a forensic and experience memory over your actual coding sessions. It reads the session JSONL files already on disk and writes only to its own local index database. Every result traces back to the exact conversation and exchange that produced it, so you can answer questions like "where did we solve this before", "what did the agent actually say", and "which session decided X".

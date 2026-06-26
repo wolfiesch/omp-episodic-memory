@@ -62,3 +62,20 @@ Checklist for cutting a release of `omp-episodic-memory`. Versions follow
 - Dependabot: after pushing, check
   `gh api repos/wolfiesch/omp-episodic-memory/dependabot/alerts --jq '[.[]|select(.state=="open")]|length'`
   is `0`.
+
+## Automated release (provenance)
+
+Pushing a version tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml),
+which runs `bun run check` + `bun run test` then publishes with
+`npm publish --provenance --access public` using the `NPM_TOKEN` repo secret
+(Settings → Secrets and variables → Actions). The workflow's OIDC `id-token`
+produces a verified provenance attestation on npm.
+
+Steps:
+
+1. Bump `version` in `package.json`.
+2. Update `CHANGELOG.md`.
+3. `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. Actions publishes the package with a verified provenance attestation.
+
+One-time setup: add `NPM_TOKEN` (a granular automation token) as a repo secret.

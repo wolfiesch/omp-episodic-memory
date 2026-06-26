@@ -11,6 +11,10 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "bin": {
     "omp-episodic": "dist/cli.js",
     "omp-episodic-mcp": "dist/mcp-server.js"

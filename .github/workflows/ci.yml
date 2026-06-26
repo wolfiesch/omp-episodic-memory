@@ -20,5 +20,5 @@ jobs:
         run: bun run check
       - name: Test
         run: bun run test
-      - name: Recall eval (smoke)
-        run: bun run eval -- --questions test/fixtures/eval/questions.jsonl --sessions test/fixtures/sessions --mode text
+      - name: Benchmark gate (OMP-MemBench)
+        run: bun run cli -- bench --questions test/fixtures/eval/questions.jsonl --sessions test/fixtures/sessions --labels test/fixtures/extract-eval/labels.jsonl --mode text

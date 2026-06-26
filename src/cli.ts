@@ -20,6 +20,8 @@ import { extractGraph } from "./graph-extract.js";
 import { findEdges, getGraphStats, type EdgeType } from "./graph.js";
 import { runEval, formatEvalReport } from "./eval.js";
 import { runExtractEval, formatExtractEvalReport } from "./extract-eval.js";
+import { runBench, formatBenchReport } from "./bench.js";
+import { scaffoldLabels, formatScaffoldJsonl } from "./label-scaffold.js";
 import { supersedeDecisions, memoryDiff } from "./supersede.js";
 import {
   setBlock,
@@ -439,6 +441,35 @@ function cmdExtractEval(flags: Map<string, string>): void {
   process.stdout.write(`${formatExtractEvalReport(report)}\n`);
 }
 
+async function cmdBench(flags: Map<string, string>): Promise<void> {
+  const questionsPath = flags.get("questions");
+  if (!questionsPath) {
+    process.stderr.write("bench requires --questions PATH (a questions.jsonl file)\n");
+    process.exitCode = 1;
+    return;
+  }
+  const report = await runBench({
+    questionsPath,
+    sessionsDir: flags.get("sessions"),
+    labelsPath: flags.get("labels"),
+    mode: (flags.get("mode") as "text" | "both" | "vector") ?? "text",
+  });
+  if (flags.get("json") === "true") {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(`${formatBenchReport(report)}\n`);
+  }
+  if (!report.gatePassed) process.exitCode = 1;
+}
+
+function cmdLabelScaffold(flags: Map<string, string>): void {
+  const rows = scaffoldLabels({
+    sessionsDir: flags.get("sessions"),
+    limit: flags.has("limit") ? Number(flags.get("limit")) : undefined,
+  });
+  process.stdout.write(formatScaffoldJsonl(rows));
+}
+
 function cmdContext(flags: Map<string, string>): void {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const db = openDb(dbPath);
@@ -561,6 +592,12 @@ async function main(): Promise<void> {
     case "extract-eval":
       cmdExtractEval(flags);
       break;
+    case "bench":
+      await cmdBench(flags);
+      break;
+    case "label-scaffold":
+      cmdLabelScaffold(flags);
+      break;
     case "context":
       cmdContext(flags);
       break;
@@ -585,6 +622,8 @@ async function main(): Promise<void> {
           "  diff     --after YYYY-MM-DD [--db PATH] [--project P] [--json]\n" +
           "  eval     --questions PATH [--db PATH] [--sessions DIR] [--mode text|both|vector] [--no-build] [--json]\n" +
           "  extract-eval [--sessions DIR] [--labels PATH] [--json]   Score extraction precision/duplicates\n" +
+          "  bench    --questions PATH [--sessions DIR] [--labels PATH] [--mode text|both|vector] [--json]   OMP-MemBench (recall+extract, exit 1 on gate fail)\n" +
+          "  label-scaffold [--sessions DIR] [--limit N]   Emit a labels.jsonl template from real-session candidates\n" +
           "  context  [--db PATH] [--project P] [--limit N] [--json]   Pinned blocks + recent memory\n" +
           "  blocks   [list|set <kind>|rm <id>] [--db PATH] [--project P] [--content TEXT] [--json]\n",
       );
