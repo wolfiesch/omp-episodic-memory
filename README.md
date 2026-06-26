@@ -1,12 +1,43 @@
-# omp-episodic-memory
+<div align="center">
 
-[![CI](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml) [![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg)](https://www.npmjs.com/package/omp-episodic-memory)
+# 🧠 omp-episodic-memory
 
-Local-first experience memory for coding agents: index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) (OMP) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas — without modifying OMP state.
+**Local-first experience memory for coding agents.**
 
-This is a forensic and experience memory over your actual coding sessions. It reads the session JSONL files already on disk and writes only to its own local index database. Every result traces back to the exact conversation and exchange that produced it, so you can answer questions like "where did we solve this before", "what did the agent actually say", and "which session decided X".
+Index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas — without ever modifying OMP state.
+
+[![CI](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg)](https://www.npmjs.com/package/omp-episodic-memory)
+[![npm downloads](https://img.shields.io/npm/dm/omp-episodic-memory.svg)](https://www.npmjs.com/package/omp-episodic-memory)
+[![Node.js](https://img.shields.io/node/v/omp-episodic-memory.svg)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
+
+[Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [CLI](#cli) · [MCP server](#mcp-server) · [Contributing](#contributing)
+
+</div>
+
+---
+
+A forensic and experience memory over your actual coding sessions. It reads the session JSONL files already on disk and writes only to its own local index database. Every result traces back to the exact conversation and exchange that produced it, so you can answer questions like "where did we solve this before", "what did the agent actually say", and "which session decided X".
 
 Read-only with respect to OMP state: it never edits, compresses, or curates OMP's own memory. It indexes the raw transcripts and exposes them through a CLI and an MCP server.
+
+## Table of contents
+
+- [Why not just use OMP memory?](#why-not-just-use-omp-memory)
+- [What it does](#what-it-does)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [CLI](#cli)
+- [Benchmarks](#benchmarks)
+- [MCP server](#mcp-server)
+- [Development](#development)
+- [Requirements](#requirements)
+- [Layout](#layout)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Why not just use OMP memory?
 
@@ -267,6 +298,27 @@ Tests run on Node's built-in test runner via `tsx` (`node --import tsx --test`).
 | `src/blocks.ts` | Pinned project-context blocks and the project-context aggregator. |
 | `src/mcp-server.ts` | MCP stdio server: `search`, `read`, `recall_for_task`, `list_gotchas`, `get_project_context`. |
 
+## Contributing
+
+Contributions are welcome. To get started:
+
+1. Fork and clone the repo, then run `bun install`.
+2. Make your change with a focused commit.
+3. Run the gates locally before opening a PR:
+
+   ```sh
+   bun run check      # type-check
+   bun run test       # test suite
+   ```
+
+4. Open a pull request describing the change and its motivation. CI runs the type-check, test suite, and the OMP-MemBench gate on every push.
+
+Bug reports and feature requests are tracked in [GitHub Issues](https://github.com/wolfiesch/omp-episodic-memory/issues). See [`RELEASING.md`](RELEASING.md) for the release process and [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+
 ## License
 
-MIT
+[MIT](LICENSE) © omp-episodic-memory contributors
+
+<div align="center">
+<sub>Built for <a href="https://github.com/can1357/oh-my-pi">Oh My Pi</a> coding sessions.</sub>
+</div>

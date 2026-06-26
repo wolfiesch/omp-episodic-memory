@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>omp-episodic-memory — Forensic Experience Memory for Coding Agents</title>
+  
+  <!-- SEO Meta Tags -->
+  <meta name="description" content="Local-first experience memory for coding agents. Index raw Oh My Pi session transcripts, then recall provenance-backed decisions, runbooks, and gotchas.">
+  <meta name="keywords" content="mcp, oh-my-pi, coding-agents, agentic-memory, sqlite, vector-search, local-first">
+  <meta property="og:title" content="omp-episodic-memory — Forensic Experience Memory">
+  <meta property="og:description" content="Local-first experience memory for coding agents. Index raw Oh My Pi transcripts, recall decisions, runbooks, and gotchas.">
+  <meta property="og:type" content="website">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'media',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Outfit', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['JetBrains Mono', 'SFMono-Regular', 'Consolas', 'Liberation Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              cyan: '#06b6d4',
+              emerald: '#10b981',
+              indigo: '#6366f1',
+              purple: '#8b5cf6',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'glow': 'glow 8s ease-in-out infinite alternate',
+          },
+          keyframes: {
+            glow: {
+              '0%': { transform: 'scale(1) translate(0px, 0px)', opacity: '0.3' },
+              '33%': { transform: 'scale(1.1) translate(30px, -50px)', opacity: '0.4' },
+              '66%': { transform: 'scale(0.9) translate(-20px, 20px)', opacity: '0.35' },
+              '100%': { transform: 'scale(1) translate(0px, 0px)', opacity: '0.3' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    /* Gradient backgrounds */
+    .gradient-bg {
+      background: #09090b;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 0%, rgba(6, 182, 212, 0.1) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+    }
+
+    /* Subtle grid line overlay */
+    .grid-lines {
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+
+    /* Scroll spy active links */
+    .toc-link.active {
+      color: #06b6d4;
+      border-left-color: #06b6d4;
+      font-weight: 600;
+    }
+
+    /* Collapsible styles */
+    details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    /* Glassmorphism cards */
+    .glass-card {
+      background: rgba(24, 24, 27, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    
+    .glass-card:hover {
+      border-color: rgba(6, 182, 212, 0.2);
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.05);
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
+
+    @media (prefers-color-scheme: light) {
+      .gradient-bg {
+        background: #fafafa;
+        background-image: 
+          radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.04) 0px, transparent 50%),
+          radial-gradient(at 50% 0%, rgba(6, 182, 212, 0.06) 0px, transparent 50%),
+          radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.04) 0px, transparent 50%);
+      }
+      .grid-lines {
+        background-image: 
+          linear-gradient(to right, rgba(0, 0, 0, 0.02) 1px, transparent 1px),
+          linear-gradient(to bottom, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
+      }
+      .glass-card {
+        background: rgba(255, 255, 255, 0.8);
+        border: 1px solid rgba(0, 0, 0, 0.06);
+      }
+      .glass-card:hover {
+        border-color: rgba(6, 182, 212, 0.3);
+        box-shadow: 0 4px 20px rgba(6, 182, 212, 0.05);
+      }
+      .toc-link.active {
+        color: #0891b2;
+        border-left-color: #0891b2;
+      }
+      ::-webkit-scrollbar-track {
+        background: #fafafa;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #e4e4e7;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #d4d4d8;
+      }
+    }
+  </style>
+</head>
+<body class="gradient-bg text-zinc-800 dark:text-zinc-100 transition-colors duration-300 min-h-screen relative font-sans overflow-x-hidden">
+  
+  <!-- Subtle decorative ambient glows -->
+  <div class="absolute top-0 left-1/4 w-[500px] h-[500px] bg-brand-indigo/10 rounded-full blur-[120px] pointer-events-none -z-10 animate-glow"></div>
+  <div class="absolute top-[10%] right-1/4 w-[600px] h-[600px] bg-brand-cyan/10 rounded-full blur-[150px] pointer-events-none -z-10 animate-glow" style="animation-delay: -3s;"></div>
+  
+  <!-- Top Grid line overlay -->
+  <div class="absolute inset-0 grid-lines pointer-events-none -z-20 opacity-70"></div>
+
+  <!-- Header Navigation -->
+  <header class="w-full border-b border-zinc-200 dark:border-zinc-800/50 sticky top-0 z-50 bg-white/80 dark:bg-zinc-950/80 backdrop-filter backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-2xl">🧠</span>
+        <span class="font-bold text-lg tracking-tight bg-gradient-to-r from-brand-cyan via-brand-indigo to-brand-purple bg-clip-text text-transparent">
+          omp-episodic-memory
+        </span>
+        <span class="text-xs font-mono px-2 py-0.5 rounded-full border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800/40 text-zinc-600 dark:text-zinc-400">
+          v1.1.0
+        </span>
+      </div>
+      <div class="flex items-center gap-4">
+        <a href="https://github.com/wolfiesch/omp-episodic-memory" target="_blank" rel="noopener" class="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">
+          <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.34-3.369-1.34-.454-1.156-1.11-1.464-1.11-1.464-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.831.092-.646.35-1.086.636-1.336-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.203 2.394.1 2.646.64.699 1.026 1.592 1.026 2.683 0 3.842-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.579.688.481C19.138 20.161 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
+          GitHub
+        </a>
+        <a href="https://www.npmjs.com/package/omp-episodic-memory" target="_blank" rel="noopener" class="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors">
+          <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M0 7.396h24V16.6H11.834V18.99H7.26V16.6H0V7.396zm1.18 1.18v6.844h4.897v-6.844H1.18zm6.077 0v8.028h3.396v-1.184h8.17v-6.844H7.257zM8.437 9.76h1.18v4.464h-1.18V9.76zm4.897 0h3.397v1.182h-1.091v2.1h1.091V14.22h-3.397V9.76zm1.18 1.182v2.102h1.037v-2.102H14.517zm4.898-1.182h3.396v4.464h-1.18v-3.282h-1.037v3.282h-1.18V9.76z"/></svg>
+          NPM
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-16 text-center relative">
+    <div class="inline-flex items-center gap-2.5 px-3 py-1 rounded-full border border-brand-cyan/20 bg-brand-cyan/5 text-brand-cyan text-sm mb-6 font-medium tracking-wide">
+      <span class="w-2 h-2 rounded-full bg-brand-cyan animate-pulse"></span>
+      100% Offline Local Experience Memory
+    </div>
+    
+    <h1 class="text-4xl sm:text-6xl font-extrabold tracking-tight text-zinc-900 dark:text-white max-w-4xl mx-auto leading-[1.1] mb-6">
+      Forensic Experience Memory <br>
+      <span class="bg-gradient-to-r from-brand-cyan via-brand-indigo to-brand-purple bg-clip-text text-transparent">
+        For Coding Agents
+      </span>
+    </h1>
+    
+    <p class="text-lg sm:text-xl text-zinc-600 dark:text-zinc-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+      Index raw Oh My Pi session transcripts to recall provenance-backed decisions, runbooks, and gotchas — without modifying agent state.
+    </p>
+
+    <!-- Installation & Buttons -->
+    <div class="flex flex-col sm:flex-row items-center justify-center gap-4 max-w-lg mx-auto mb-16">
+      <div class="flex items-center justify-between bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3 font-mono text-sm w-full text-left relative group">
+        <span class="text-brand-cyan flex items-center gap-2">
+          <span>$</span>
+          <span class="text-zinc-300 select-all" id="npm-install-text">npm install -g omp-episodic-memory</span>
+        </span>
+        <button onclick="copyInstallCmd()" class="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Copy to clipboard">
+          <svg id="copy-icon" class="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+          <svg id="check-icon" class="w-4 h-4 fill-none stroke-emerald-400 hidden" viewBox="0 0 24 24" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+        </button>
+      </div>
+      <a href="#quick-start" class="w-full sm:w-auto px-6 py-3.5 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 font-semibold transition-all shadow-lg hover:shadow-zinc-100/10 whitespace-nowrap text-center">
+        Get Started
+      </a>
+      <a href="#mcp-server" class="w-full sm:w-auto px-6 py-3.5 rounded-lg border border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800/50 text-white font-semibold transition-all whitespace-nowrap text-center">
+        Configure MCP
+      </a>
+    </div>
+
+    <!-- Interactive Flow Diagram Header -->
+    <div class="max-w-5xl mx-auto rounded-xl border border-zinc-200 dark:border-zinc-800/50 bg-zinc-100/40 dark:bg-zinc-950/40 p-6 sm:p-8 backdrop-blur-sm">
+      <div class="text-left mb-6">
+        <h3 class="text-md font-mono text-brand-cyan uppercase tracking-wider mb-1 flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-brand-cyan"></span>
+          Data Pipeline Architecture
+        </h3>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400">How raw transcripts turn into highly actionable agent context</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-5 gap-4 relative">
+        <!-- Step 1 -->
+        <div class="glass-card rounded-lg p-5 text-left flex flex-col justify-between relative group">
+          <div>
+            <div class="text-xs font-mono text-zinc-500 mb-2">01 / PARSE</div>
+            <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">Crawl JSONL</h4>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Walks sessions directory on disk and extracts exchange blocks.</p>
+          </div>
+          <div class="mt-4 text-xs font-mono text-brand-indigo bg-brand-indigo/10 py-1 px-2 rounded w-max">
+            Local Disk
+          </div>
+        </div>
+
+        <!-- Arrow 1-2 -->
+        <div class="hidden md:flex items-center justify-center text-zinc-700">
+          <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="glass-card rounded-lg p-5 text-left flex flex-col justify-between relative group">
+          <div>
+            <div class="text-xs font-mono text-zinc-500 mb-2">02 / EMBED</div>
+            <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">Transformers.js</h4>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Generates local vectors via MiniLM-L6-v2 model. Zero API keys.</p>
+          <div class="mt-4 text-xs font-mono text-brand-cyan bg-brand-cyan/10 py-1 px-2 rounded w-max">
+            ONNX Runtime
+          </div>
+        </div>
+
+        <!-- Arrow 2-3 -->
+        <div class="hidden md:flex items-center justify-center text-zinc-700">
+          <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="glass-card rounded-lg p-5 text-left flex flex-col justify-between relative group">
+          <div>
+            <div class="text-xs font-mono text-zinc-500 mb-2">03 / INDEX</div>
+            <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">SQLite SQLite-Vec</h4>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Stores hybrid index: FTS5 for text and vec0 for vector embeddings.</p>
+          <div class="mt-4 text-xs font-mono text-brand-purple bg-brand-purple/10 py-1 px-2 rounded w-max">
+            Hybrid Store
+          </div>
+        </div>
+
+        <!-- Arrow 3-4 -->
+        <div class="hidden md:flex items-center justify-center text-zinc-700">
+          <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="glass-card rounded-lg p-5 text-left flex flex-col justify-between relative group">
+          <div>
+            <div class="text-xs font-mono text-zinc-500 mb-2">04 / FUSE</div>
+            <h4 class="font-semibold text-zinc-900 dark:text-white mb-1">RRF Search</h4>
+            <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-normal">Combines FTS5 and vector matches into a unified ranked output.</p>
+          <div class="mt-4 text-xs font-mono text-brand-emerald bg-brand-emerald/10 py-1 px-2 rounded w-max">
+            RRF Formula
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Content Wrap (Grid with sticky sidebar) -->
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+    <div class="wrap">
+      
+      <!-- Sticky Sidebar TOC -->
+      <nav class="toc" id="toc">
+        <div class="toc-title">Contents</div>
+        <a href="#why" class="toc-link">Why Episodic?</a>
+        <a href="#features" class="toc-link">Core Features</a>
+        <a href="#inbox-demo" class="toc-link">Interactive Inbox</a>
+        <a href="#cli-playground" class="toc-link">CLI Playground</a>
+        <a href="#mcp-server" class="toc-link">MCP Integration</a>
+        <a href="#benchmarks" class="toc-link">Benchmarks</a>
+        <a href="#development" class="toc-link">Development</a>
+      </nav>
+
+      <!-- Main Content Area -->
+      <div class="main space-y-24">
+        
+        <!-- Section: Why -->
+        <section id="why" class="sec-head">
+          <div class="flex items-center gap-3 mb-6">
+            <span class="text-3xl">⚔️</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Why not just use built-in OMP memory?</h2>
+          </div>
+          <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed mb-6">
+            Oh My Pi's built-in memory is curated and compressed — a distilled view optimized for the agent's working context. That is extremely useful, but it is lossy: the original wording, the dead ends, and the precise moment a decision was made are discarded.
+          </p>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+            <div class="glass-card rounded-xl p-6 border-l-4 border-brand-indigo">
+              <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-3">The Curation Gap</h3>
+              <p class="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                When agents compress logs into facts, they throw away the "why" and the verbatim command syntax. When you hit a bug that was solved weeks ago, you need to see the exact logs, code block changes, and CLI outputs — not just a summaries saying "fixed X issue."
+              </p>
+            </div>
+            
+            <div class="glass-card rounded-xl p-6 border-l-4 border-brand-cyan">
+              <h3 class="text-lg font-semibold text-zinc-900 dark:text-white mb-3">Forensic Provenance</h3>
+              <p class="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                Every retrieved result from omp-episodic-memory links directly back to the source session JSONL, user prompt, and assistant code block that solved it. You can track decisions through time, compare options, and review changes on the fly.
+              </p>
+            </div>
+        </section>
+
+        <!-- Section: Core Features -->
+        <section id="features" class="sec-head">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="text-3xl">⚡</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Core Features</h2>
+          </div>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Modern, production-grade capabilities for professional coding environments</p>
+          
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            
+            <!-- Feature 1 -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="w-10 h-10 rounded-lg bg-brand-cyan/10 flex items-center justify-center text-brand-cyan mb-4">
+                  <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </div>
+                <h4 class="font-semibold text-zinc-900 dark:text-white mb-2">Hybrid Retrieval</h4>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Fuses Sqlite FTS5 keyword matching and vector matching into a unified ranking system via Reciprocal Rank Fusion (RRF).
+                </p>
+              </div>
+            </div>
+
+            <!-- Feature 2 -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="w-10 h-10 rounded-lg bg-brand-indigo/10 flex items-center justify-center text-brand-indigo mb-4">
+                  <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+                </div>
+                <h4 class="font-semibold text-zinc-900 dark:text-white mb-2">Reviewable Memory Inbox</h4>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Automatically extracts candidate decisions, gotchas, and runbooks into a staging inbox. You decide what enters the permanent DB.
+                </p>
+              </div>
+            </div>
+
+            <!-- Feature 3 -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="w-10 h-10 rounded-lg bg-brand-purple/10 flex items-center justify-center text-brand-purple mb-4">
+                  <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                </div>
+                <h4 class="font-semibold text-zinc-900 dark:text-white mb-2">Evidence Bundles</h4>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Retrieved items include confidence metrics and source verification. Correctly abstains instead of fabricating answers.
+                </p>
+              </div>
+            </div>
+
+            <!-- Feature 4 -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <h4 class="font-semibold text-zinc-900 dark:text-white mb-2">Temporal Project Graph</h4>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Maps relationships over time with automatic supersession rules and diff outputs to check updates since a specific date.
+                </p>
+              </div>
+            </div>
+
+            <!-- Feature 5 -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="w-10 h-10 rounded-lg bg-brand-cyan/10 flex items-center justify-center text-brand-cyan mb-4">
+                  <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                </div>
+                <h4 class="font-semibold text-zinc-900 dark:text-white mb-2">Pinned Context Blocks</h4>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Pin durable markdown instructions, rules, or system details to projects to ensure they are always present in the context.
+                </p>
+              </div>
+            </div>
+
+            <!-- Feature 6 -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="w-10 h-10 rounded-lg bg-brand-indigo/10 flex items-center justify-center text-brand-indigo mb-4">
+                  <svg class="w-6 h-6 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                </div>
+                <h4 class="font-semibold text-zinc-900 dark:text-white mb-2">Eval Harness Gates</h4>
+                <p class="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                  Comprehensive gold-set tests verifying retrieval precision, abstention recall, and model latency thresholds on CI.
+                </p>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- Section: Interactive Inbox Demo -->
+        <section id="inbox-demo" class="sec-head">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="text-3xl">📬</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Interactive Memory Inbox</h2>
+          </div>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Try approving and rejecting derived candidate memories dynamically below</p>
+          
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Staging Inbox -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4">
+                  <h4 class="font-bold text-white flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse"></span>
+                    Pending Inbox Staging
+                  </h4>
+                  <span class="text-xs font-mono text-zinc-500" id="inbox-count">3 items pending</span>
+                </div>
+                
+                <div class="space-y-4" id="inbox-items">
+                  <!-- Item 1 -->
+                  <div class="p-4 rounded-lg bg-zinc-900/80 border border-zinc-800 flex flex-col justify-between gap-3 transition-all duration-300" id="item-1">
+                    <div>
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] font-mono text-brand-indigo bg-brand-indigo/10 px-2 py-0.5 rounded">DECISION</span>
+                        <span class="text-[10px] font-mono text-zinc-500">session-a8f2</span>
+                      </div>
+                      <p class="text-xs text-zinc-300 leading-relaxed">
+                        Chose sqlite-vec over pgvector because the project requires a zero-dependency local SQLite file.
+                      </p>
+                    </div>
+                    <div class="flex items-center justify-end gap-2 border-t border-zinc-800/50 pt-2.5">
+                      <button onclick="rejectItem('item-1')" class="text-xs font-semibold px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-red-400 transition-colors">Reject</button>
+                      <button onclick="approveItem('item-1', 'DECISION', 'Chose sqlite-vec over pgvector because the project requires a zero-dependency local SQLite file.', 'session-a8f2')" class="text-xs font-semibold px-2.5 py-1 rounded bg-brand-cyan hover:bg-brand-cyan/80 text-zinc-950 transition-colors">Approve</button>
+                    </div>
+                  </div>
+
+                  <!-- Item 2 -->
+                  <div class="p-4 rounded-lg bg-zinc-900/80 border border-zinc-800 flex flex-col justify-between gap-3 transition-all duration-300" id="item-2">
+                    <div>
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] font-mono text-brand-cyan bg-brand-cyan/10 px-2 py-0.5 rounded">GOTCHA</span>
+                        <span class="text-[10px] font-mono text-zinc-500">session-9b1c</span>
+                      </div>
+                      <p class="text-xs text-zinc-300 leading-relaxed">
+                        Transformers.js model downloads are cached, but the first run will block vector searches. Pass mode: 'text' to bypass.
+                      </p>
+                    </div>
+                    <div class="flex items-center justify-end gap-2 border-t border-zinc-800/50 pt-2.5">
+                      <button onclick="rejectItem('item-2')" class="text-xs font-semibold px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-red-400 transition-colors">Reject</button>
+                      <button onclick="approveItem('item-2', 'GOTCHA', 'Transformers.js model downloads are cached, but the first run will block vector searches. Pass mode: \'text\' to bypass.', 'session-9b1c')" class="text-xs font-semibold px-2.5 py-1 rounded bg-brand-cyan hover:bg-brand-cyan/80 text-zinc-950 transition-colors">Approve</button>
+                    </div>
+                  </div>
+
+                  <!-- Item 3 -->
+                  <div class="p-4 rounded-lg bg-zinc-900/80 border border-zinc-800 flex flex-col justify-between gap-3 transition-all duration-300" id="item-3">
+                    <div>
+                      <div class="flex items-center justify-between mb-2">
+                        <span class="text-[10px] font-mono text-brand-purple bg-brand-purple/10 px-2 py-0.5 rounded">RUNBOOK</span>
+                        <span class="text-[10px] font-mono text-zinc-500">session-c4d2</span>
+                      </div>
+                      <p class="text-xs text-zinc-300 leading-relaxed">
+                        To regenerate the Gold Set index, run omp-episodic label-scaffold, review candidates, then run the bench command.
+                      </p>
+                    </div>
+                    <div class="flex items-center justify-end gap-2 border-t border-zinc-800/50 pt-2.5">
+                      <button onclick="rejectItem('item-3')" class="text-xs font-semibold px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-red-400 transition-colors">Reject</button>
+                      <button onclick="approveItem('item-3', 'RUNBOOK', 'To regenerate the Gold Set index, run omp-episodic label-scaffold, review candidates, then run the bench command.', 'session-c4d2')" class="text-xs font-semibold px-2.5 py-1 rounded bg-brand-cyan hover:bg-brand-cyan/80 text-zinc-950 transition-colors">Approve</button>
+                    </div>
+                  </div>
+                  
+                  <div class="text-center py-6 text-zinc-600 text-xs hidden" id="empty-inbox-msg">
+                    No pending memories! Excellent.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Approved Base -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4">
+                  <h4 class="font-bold text-white flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-brand-emerald"></span>
+                    Approved Knowledge Base
+                  </h4>
+                  <span class="text-xs font-mono text-zinc-500" id="approved-count">0 items approved</span>
+                </div>
+                
+                <div class="space-y-4 max-h-[360px] overflow-y-auto pr-1" id="approved-items">
+                  <div class="text-center py-12 text-zinc-600 text-xs" id="empty-approved-msg">
+                    Approved memories will appear here.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section: CLI Playground -->
+        <section id="cli-playground" class="sec-head">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="text-3xl">💻</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">CLI Command Center</h2>
+          </div>
+          <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-8">Execute forensically precise search commands directly in the terminal</p>
+          
+          <div class="glass-card rounded-xl overflow-hidden border border-zinc-200 dark:border-zinc-800">
+            <!-- Terminal Header -->
+            <div class="bg-zinc-100 dark:bg-zinc-950 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between select-none">
+              <div class="flex items-center gap-2">
+                <span class="w-3.5 h-3.5 rounded-full bg-red-500/20 border border-red-500/40"></span>
+                <span class="w-3.5 h-3.5 rounded-full bg-yellow-500/20 border border-yellow-500/40"></span>
+                <span class="w-3.5 h-3.5 rounded-full bg-green-500/20 border border-green-500/40"></span>
+                <span class="text-xs font-mono text-zinc-500 ml-2">omp-episodic-memory --help</span>
+              </div>
+              <span class="text-[10px] font-mono text-zinc-600 dark:text-zinc-450">bash</span>
+            </div>
+
+            <!-- Terminal Tabs -->
+            <div class="bg-zinc-200/50 dark:bg-zinc-900 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 flex items-center gap-2 overflow-x-auto select-none">
+              <button onclick="setCliTab('index')" class="cli-tab active px-3 py-1 rounded text-xs font-mono bg-white dark:bg-zinc-800 text-brand-cyan border border-brand-cyan/20">index</button>
+              <button onclick="setCliTab('search')" class="cli-tab px-3 py-1 rounded text-xs font-mono text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">search</button>
+              <button onclick="setCliTab('recall')" class="cli-tab px-3 py-1 rounded text-xs font-mono text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">recall</button>
+              <button onclick="setCliTab('stats')" class="cli-tab px-3 py-1 rounded text-xs font-mono text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">stats</button>
+            </div>
+
+            <!-- Terminal Screen -->
+            <div class="bg-zinc-950 p-6 font-mono text-sm leading-relaxed min-h-[280px] overflow-y-auto text-zinc-300" id="cli-terminal-screen">
+              <!-- Default: index command output -->
+<span class="text-zinc-500"># Start indexing session logs</span>
+<span class="text-brand-cyan">$</span> <span class="text-white">omp-episodic index</span>
+
+Scanning /Users/wolfie/.omp/agent/sessions...
+Found 42 session log files.
+
+[██████████████████████████████] 100% | 42/42 files
+Extracted 524 user-assistant exchanges.
+Generating local vector embeddings...
+[██████████████████████████████] 100% | 524 exchanges embedded
+
+Upserting SQLite indexes...
+Done! Index size: 2.4 MB.
+            </div>
+          </div>
+        </section>
+        <!-- Section: MCP Server Integration -->
+        <section id="mcp-server" class="sec-head">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="text-3xl">🔌</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">MCP Server Configuration</h2>
+          </div>
+          <p class="text-sm text-zinc-550 dark:text-zinc-400 mb-8">Register the server in your favorite agent harness to expose episodic memory tools</p>
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Left Side: Config code blocks -->
+            <div class="lg:col-span-2 flex flex-col gap-6">
+              <div class="glass-card rounded-xl overflow-hidden">
+                <div class="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs font-mono text-zinc-400">Claude Code Config (claude_desktop_config.json)</span>
+                  </div>
+                  <button onclick="copyMcpConfig()" class="text-zinc-500 hover:text-zinc-300 transition-colors p-1" title="Copy configuration">
+                    <svg id="mcp-copy-icon" class="w-4 h-4 fill-none stroke-current" viewBox="0 0 24 24" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    <svg id="mcp-check-icon" class="w-4 h-4 fill-none stroke-emerald-400 hidden" viewBox="0 0 24 24" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  </button>
+                </div>
+                <pre class="bg-zinc-950 p-4 overflow-x-auto text-xs font-mono text-zinc-300 select-all" id="mcp-config-code">
+{
+  "mcpServers": {
+    "omp-episodic-memory": {
+      "command": "npx",
+      "args": ["-y", "-p", "omp-episodic-memory", "omp-episodic-mcp"]
+    }
+  }
+}</pre>
+              </div>
+            </div>
+
+            <!-- Right Side: Tools details -->
+            <div class="glass-card rounded-xl p-6 flex flex-col justify-between">
+              <div>
+                <h4 class="font-bold text-white mb-4">Exposed Tools</h4>
+                <div class="space-y-4">
+                  <div class="flex flex-col border-b border-zinc-800 pb-2">
+                    <span class="font-mono text-xs text-brand-cyan">search</span>
+                    <span class="text-xs text-zinc-400 mt-1">Hybrid retrieval over indexed sessions (markdown/JSON).</span>
+                  </div>
+                  <div class="flex flex-col border-b border-zinc-800 pb-2">
+                    <span class="font-mono text-xs text-brand-cyan">read</span>
+                    <span class="text-xs text-zinc-400 mt-1">Read a full session transcript securely by path.</span>
+                  </div>
+                  <div class="flex flex-col border-b border-zinc-800 pb-2">
+                    <span class="font-mono text-xs text-brand-cyan">recall_for_task</span>
+                    <span class="text-xs text-zinc-400 mt-1">Evidence bundle query with strict confidence tiers.</span>
+                  </div>
+                  <div class="flex flex-col border-b border-zinc-800 pb-2">
+                    <span class="font-mono text-xs text-brand-cyan">list_gotchas</span>
+                    <span class="text-xs text-zinc-400 mt-1">Fetch approved pitfall and failure-mode memories for a project.</span>
+                  </div>
+                  <div class="flex flex-col">
+                    <span class="font-mono text-xs text-brand-cyan">get_project_context</span>
+                    <span class="text-xs text-zinc-400 mt-1">Pinned context blocks plus recent approved decisions/gotchas.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section: Benchmarks -->
+        <section id="benchmarks" class="sec-head">
+          <div class="flex items-center gap-3 mb-2">
+            <span class="text-3xl">📊</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Gold Set Benchmarks</h2>
+          </div>
+          <p class="text-sm text-zinc-550 dark:text-zinc-400 mb-8">OMP-MemBench metrics verified on every pull request push. Baseline results on synthetic fixtures:</p>
+          
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <!-- Stat 1 -->
+            <div class="glass-card rounded-xl p-6 text-center border-t-2 border-brand-cyan">
+              <div class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-1">RECALL@5</div>
+              <div class="text-4xl font-extrabold text-white mb-2">100%</div>
+              <div class="text-[10px] text-zinc-400 leading-normal">Gate floor: &ge; 85% in CI</div>
+            </div>
+            <!-- Stat 2 -->
+            <div class="glass-card rounded-xl p-6 text-center border-t-2 border-brand-indigo">
+              <div class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-1">ABSTENTION ACCURACY</div>
+              <div class="text-4xl font-extrabold text-white mb-2">100%</div>
+              <div class="text-[10px] text-zinc-400 leading-normal">Gate floor: False Positive &lt; 10%</div>
+            </div>
+            <!-- Stat 3 -->
+            <div class="glass-card rounded-xl p-6 text-center border-t-2 border-brand-purple">
+              <div class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-1">EXTRACTION PRECISION</div>
+              <div class="text-4xl font-extrabold text-white mb-2">83.3%</div>
+              <div class="text-[10px] text-zinc-400 leading-normal">Gate floor: &ge; 80% (target 85%)</div>
+            </div>
+            <!-- Stat 4 -->
+            <div class="glass-card rounded-xl p-6 text-center border-t-2 border-brand-emerald">
+              <div class="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-1">p95 LATENCY</div>
+              <div class="text-4xl font-extrabold text-white mb-2">sub-ms</div>
+              <div class="text-[10px] text-zinc-400 leading-normal">Gate floor: &lt; 500ms on index query</div>
+            </div>
+          </div>
+
+          <div class="mt-6 p-4 rounded-lg bg-zinc-900/40 border border-zinc-800/50 text-xs text-zinc-400 leading-relaxed">
+            <strong>Note on metrics:</strong> These results are measured on the bundled synthetic fixtures as a regression guardrail. Real-world query latencies depend on corpus size and embedding runtime, but text-mode lookups are designed to run in milliseconds by leveraging SQLite's native FTS5 indices.
+          </div>
+        </section>
+
+        <!-- Section: Development -->
+        <section id="development" class="sec-head">
+          <div class="flex items-center gap-3 mb-6">
+            <span class="text-3xl">🛠️</span>
+            <h2 class="text-3xl font-bold tracking-tight text-zinc-900 dark:text-white">Local Development</h2>
+          </div>
+          <p class="text-zinc-600 dark:text-zinc-400 leading-relaxed mb-6">
+            Episodic Memory utilizes <a href="https://bun.sh" class="text-brand-cyan hover:underline">Bun</a> for rapid testing, typechecking, and package compiling.
+          </p>
+          
+          <div class="bg-zinc-950/80 border border-zinc-800 rounded-xl p-6 font-mono text-sm space-y-4">
+            <div>
+              <span class="text-zinc-500"># Install dev dependencies</span>
+              <div class="text-zinc-200 mt-1">$ bun install</div>
+            </div>
+            <div>
+              <span class="text-zinc-500"># Type-check TypeScript codebase</span>
+              <div class="text-zinc-200 mt-1">$ bun run check</div>
+            </div>
+            <div>
+              <span class="text-zinc-500"># Execute Node's native test runner via tsx</span>
+              <div class="text-zinc-200 mt-1">$ bun run test</div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="w-full border-t border-zinc-900 bg-zinc-950 py-12 mt-20 relative select-none">
+    <div class="max-w-7xl mx-auto px-4 text-center">
+      <p class="text-sm text-zinc-600">
+        omp-episodic-memory © 2026. Released under the MIT License.
+      </p>
+      <p class="text-xs text-zinc-700 mt-2">
+        Built for the Oh My Pi community and agent developer ecosystem.
+      </p>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script>
+    // Copy Install Cmd
+    function copyInstallCmd() {
+      const text = document.getElementById('npm-install-text').innerText;
+      navigator.clipboard.writeText(text);
+      
+      const copyIcon = document.getElementById('copy-icon');
+      const checkIcon = document.getElementById('check-icon');
+      
+      copyIcon.classList.add('hidden');
+      checkIcon.classList.remove('hidden');
+      
+      setTimeout(() => {
+        copyIcon.classList.remove('hidden');
+        checkIcon.classList.add('hidden');
+      }, 2000);
+    }
+
+    // Copy MCP Config
+    function copyMcpConfig() {
+      const text = document.getElementById('mcp-config-code').innerText;
+      navigator.clipboard.writeText(text.trim());
+      
+      const copyIcon = document.getElementById('mcp-copy-icon');
+      const checkIcon = document.getElementById('mcp-check-icon');
+      
+      copyIcon.classList.add('hidden');
+      checkIcon.classList.remove('hidden');
+      
+      setTimeout(() => {
+        copyIcon.classList.remove('hidden');
+        checkIcon.classList.add('hidden');
+      }, 2000);
+    }
+
+    // Interactive Inbox Code
+    const approvedItemsList = [];
+    const pendingItemsCount = 3;
+    let pendingCount = pendingItemsCount;
+    let approvedCount = 0;
+
+    function updateInboxBadge() {
+      const countEl = document.getElementById('inbox-count');
+      countEl.innerText = `${pendingCount} items pending`;
+      if (pendingCount === 0) {
+        document.getElementById('empty-inbox-msg').classList.remove('hidden');
+      }
+    }
+
+    function updateApprovedBadge() {
+      const countEl = document.getElementById('approved-count');
+      countEl.innerText = `${approvedCount} items approved`;
+      if (approvedCount > 0) {
+        document.getElementById('empty-approved-msg').classList.add('hidden');
+      } else {
+        document.getElementById('empty-approved-msg').classList.remove('hidden');
+      }
+    }
+
+    function rejectItem(id) {
+      const el = document.getElementById(id);
+      el.style.transform = 'scale(0.95)';
+      el.style.opacity = '0';
+      setTimeout(() => {
+        el.remove();
+        pendingCount--;
+        updateInboxBadge();
+      }, 300);
+    }
+
+    function approveItem(id, type, text, session) {
+      const el = document.getElementById(id);
+      el.style.transform = 'scale(0.95)';
+      el.style.opacity = '0';
+      
+      setTimeout(() => {
+        el.remove();
+        pendingCount--;
+        updateInboxBadge();
+
+        approvedCount++;
+        updateApprovedBadge();
+
+        const approvedContainer = document.getElementById('approved-items');
+        
+        const typeColor = type === 'DECISION' ? 'brand-indigo' : type === 'GOTCHA' ? 'brand-cyan' : 'brand-purple';
+        const typeBgColor = type === 'DECISION' ? 'bg-brand-indigo/10' : type === 'GOTCHA' ? 'bg-brand-cyan/10' : 'bg-brand-purple/10';
+        const textColor = type === 'DECISION' ? 'text-brand-indigo' : type === 'GOTCHA' ? 'text-brand-cyan' : 'text-brand-purple';
+
+        const newItem = document.createElement('div');
+        newItem.className = 'p-4 rounded-lg bg-zinc-900 border border-brand-emerald/30 flex flex-col justify-between gap-2 transition-all duration-300 opacity-0 scale-95';
+        newItem.innerHTML = `
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] font-mono ${textColor} ${typeBgColor} px-2 py-0.5 rounded">${type}</span>
+              <span class="text-[10px] font-mono text-zinc-500">${session}</span>
+            </div>
+            <p class="text-xs text-zinc-300 leading-relaxed">${text}</p>
+          </div>
+          <div class="flex items-center gap-1.5 text-[10px] text-brand-emerald font-mono mt-1">
+            <svg class="w-3 h-3 stroke-current fill-none" viewBox="0 0 24 24" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            Active In Database
+          </div>
+        `;
+        
+        approvedContainer.appendChild(newItem);
+        setTimeout(() => {
+          newItem.classList.remove('opacity-0', 'scale-95');
+        }, 50);
+      }, 300);
+    }
+
+    // CLI terminal screens data
+    const cliScreens = {
+      index: `
+<span class="text-zinc-500"># Start indexing session logs</span>
+<span class="text-brand-cyan">$</span> <span class="text-white">omp-episodic index</span>
+
+Scanning /Users/wolfie/.omp/agent/sessions...
+Found 42 session log files.
+
+[██████████████████████████████] 100% | 42/42 files
+Extracted 524 user-assistant exchanges.
+Generating local vector embeddings...
+[██████████████████████████████] 100% | 524 exchanges embedded
+
+Upserting SQLite indexes...
+Done! Index size: 2.4 MB.
+      `,
+      search: `
+<span class="text-zinc-500"># Run RRF hybrid vector+text search</span>
+<span class="text-brand-cyan">$</span> <span class="text-white">omp-episodic search "sqlite-vec compilation"</span>
+
+Retrieving candidates (mode: both, RRF)...
+Found 3 matches:
+
+<span class="text-brand-cyan">[1] Match (score: 0.033)</span>
+    Session: <span class="text-zinc-400">2026-05-18_12-11-09.jsonl</span>
+    User: <span class="text-zinc-300">"Compilation fails with node-gyp on arm64 Apple M4..."</span>
+    Assistant: <span class="text-zinc-400">"Make sure Xcode command line tools are updated, and check that npm installs node-addon-api correctly. You can trigger a rebuild with npm rebuild sqlite-vec."</span>
+
+<span class="text-brand-cyan">[2] Match (score: 0.016)</span>
+    Session: <span class="text-zinc-400">2026-05-24_15-42-01.jsonl</span>
+    User: <span class="text-zinc-300">"Using sqlite-vec inside bun environment..."</span>
+      `,
+      recall: `
+<span class="text-zinc-500"># Build task-scoped evidence bundle</span>
+<span class="text-brand-cyan">$</span> <span class="text-white">omp-episodic recall "fix sqlite-vec Apple Silicon"</span>
+
+Evaluating task requirements...
+Matching index exchanges (Threshold: 0.85)...
+
+<span class="text-brand-emerald">Confidence Score: HIGH (0.92)</span>
+
+<span class="text-zinc-300">Evidence Node 1:</span>
+    Exchanges from: <span class="text-zinc-400">session-a8f2</span> (2026-05-12)
+    Snippet: "Xcode CLT path was misconfigured. Resolved by running: xcode-select --install"
+
+<span class="text-zinc-300">Evidence Node 2:</span>
+    Exchanges from: <span class="text-zinc-400">session-b412</span> (2026-05-15)
+    Snippet: "Add sqlite-vec to external node binaries to bypass native build issues in Bun runtime."
+      `,
+      stats: `
+<span class="text-zinc-500"># Print database statistics</span>
+<span class="text-brand-cyan">$</span> <span class="text-white">omp-episodic stats</span>
+
+Index Database: <span class="text-brand-cyan">~/.local/share/omp-episodic-memory/index.db</span>
+Database Size:  <span class="text-zinc-300">2.4 MB</span>
+
+Database Contents:
+    Sessions indexed:     <span class="text-white">42</span>
+    Parsed exchanges:     <span class="text-white">524</span>
+    Vector embeddings:    <span class="text-white">524</span> (Xenova/all-MiniLM-L6-v2)
+    FTS5 keyword tokens:  <span class="text-white">43,212</span>
+    Approved decisions:   <span class="text-white">12</span>
+    Approved gotchas:     <span class="text-white">8</span>
+    Approved runbooks:    <span class="text-white">6</span>
+      `
+    };
+
+    function setCliTab(tab) {
+      // Toggle tabs
+      const tabs = document.querySelectorAll('.cli-tab');
+      tabs.forEach(t => {
+        t.classList.remove('active', 'bg-zinc-800', 'text-brand-cyan', 'border', 'border-brand-cyan/20');
+        t.classList.add('text-zinc-400');
+        if (t.innerText === tab) {
+          t.classList.add('active', 'bg-zinc-800', 'text-brand-cyan', 'border', 'border-brand-cyan/20');
+          t.classList.remove('text-zinc-400');
+        }
+      });
+
+      // Swap content
+      const screen = document.getElementById('cli-terminal-screen');
+      screen.innerHTML = cliScreens[tab].trim();
+    }
+
+    // Scroll spy Javascript
+    (function() {
+      const toc = document.getElementById('toc');
+      const links = toc.querySelectorAll('a');
+      const sections = [];
+
+      links.forEach(link => {
+        const id = link.getAttribute('href').slice(1);
+        const el = document.getElementById(id);
+        if (el) sections.push({ id, el, link });
+      });
+
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            links.forEach(l => l.classList.remove('active'));
+            const match = sections.find(s => s.el === entry.target);
+            if (match) {
+              match.link.classList.add('active');
+              if (window.innerWidth <= 1000) {
+                match.link.scrollIntoView({
+                  behavior: 'smooth', block: 'nearest', inline: 'center'
+                });
+              }
+            }
+          }
+        });
+      }, { rootMargin: '-10% 0px -80% 0px' });
+
+      sections.forEach(s => observer.observe(s.el));
+
+      links.forEach(link => {
+        link.addEventListener('click', e => {
+          e.preventDefault();
+          const id = link.getAttribute('href').slice(1);
+          const el = document.getElementById(id);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            history.replaceState(null, '', '#' + id);
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
