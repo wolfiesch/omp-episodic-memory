@@ -2,20 +2,25 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
-
-import type Database from "better-sqlite3";
+import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 import { openDb } from "../src/db.js";
+import { extract } from "../src/extractor.js";
 import {
   getMemoryRecord,
+  getSupersededBy,
+  initMemorySchema,
   insertMemoryRecord,
   listMemoryRecords,
   searchMemoryRecords,
+  setSupersedesMemoryId,
   updateMemoryStatus,
   type MemorySource,
   type NewMemoryRecord,
 } from "../src/memory.js";
+import { supersedeDecisions } from "../src/supersede.js";
 
 let dbPath: string;
 let db: Database.Database;
@@ -38,6 +43,12 @@ after(() => {
     }
   }
 });
+
+const FIXTURES_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "fixtures",
+  "sessions",
+);
 
 const source: MemorySource = {
   sessionId: "aaaaaaaa-0000-7000-8000-000000000001",
@@ -66,6 +77,85 @@ test("insertMemoryRecord returns an id; getMemoryRecord returns pending record w
   assert.equal(rec.status, "pending");
   assert.equal(rec.title, "Provenance test");
   assert.deepEqual(rec.sources, [source]);
+});
+
+test("fresh memory schema includes supersedes_memory_id", () => {
+  const cols = db.prepare(`PRAGMA table_info(memory_records)`).all() as Array<{ name: string }>;
+  assert.ok(cols.some((col) => col.name === "supersedes_memory_id"));
+});
+
+test("initMemorySchema migrates old memory_records tables with supersedes_memory_id", () => {
+  const legacyPath = join(tmpdir(), "omp-mem-legacy-" + randomUUID() + ".db");
+  const legacy = new Database(legacyPath);
+  try {
+    legacy.exec(`
+      CREATE TABLE memory_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        project TEXT,
+        entities TEXT NOT NULL DEFAULT '[]',
+        valid_from INTEGER,
+        valid_to INTEGER,
+        confidence REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        dedupe_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(dedupe_key)
+      );
+    `);
+    initMemorySchema(legacy);
+    const cols = legacy.prepare(`PRAGMA table_info(memory_records)`).all() as Array<{ name: string }>;
+    assert.ok(cols.some((col) => col.name === "supersedes_memory_id"));
+  } finally {
+    legacy.close();
+    unlinkSync(legacyPath);
+  }
+});
+
+test("superseded records are reachable from the current memory record", () => {
+  const olderId = insertMemoryRecord(db, record({ title: "Pointer older " + randomUUID() }));
+  const newerId = insertMemoryRecord(db, record({ title: "Pointer newer " + randomUUID() }));
+  assert.equal(setSupersedesMemoryId(db, newerId, olderId), true);
+
+  const newer = getMemoryRecord(db, newerId);
+  assert.equal(newer?.supersedesMemoryId, olderId);
+  assert.deepEqual(getSupersededBy(db, newerId).map((rec) => rec.id), [olderId]);
+});
+
+test("supersedeDecisions links newer fixture decision to its superseded ancestor", () => {
+  const fixtureDbPath = join(tmpdir(), "omp-mem-supersede-" + randomUUID() + ".db");
+  const fixtureDb = openDb(fixtureDbPath);
+  try {
+    fixtureDb.close();
+    extract({ dbPath: fixtureDbPath, sessionsDir: FIXTURES_DIR });
+    const reopened = openDb(fixtureDbPath);
+    try {
+      for (const rec of listMemoryRecords(reopened, "pending", 1000)) {
+        updateMemoryStatus(reopened, rec.id, "approved");
+      }
+      supersedeDecisions(reopened);
+      const records = listMemoryRecords(reopened, undefined, 1000);
+      const current = records.find((rec) => rec.title.includes("store recall cache in SQLite"));
+      const older = records.find((rec) => rec.title.includes("store recall cache in JSON"));
+      assert.ok(current);
+      assert.ok(older);
+      assert.equal(current.supersedesMemoryId, older.id);
+      assert.deepEqual(getSupersededBy(reopened, current.id).map((rec) => rec.id), [older.id]);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(fixtureDbPath + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
 });
 
 test("PROVENANCE REQUIRED: insertMemoryRecord with sources:[] throws", () => {

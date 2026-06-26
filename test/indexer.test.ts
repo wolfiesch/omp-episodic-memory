@@ -1,6 +1,6 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import type Database from "better-sqlite3";
 import { openDb } from "../src/db.js";
-import { ensureIndexStateTable, shouldIndexFile } from "../src/indexer.js";
+import { ensureIndexStateTable, findSessionFiles, shouldIndexFile } from "../src/indexer.js";
 
 const SESSIONS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -85,4 +85,19 @@ test("indexed_files upsert + lookup returns the stored mtime", () => {
     .prepare(`SELECT mtime_ms FROM indexed_files WHERE path = ?`)
     .get(path) as IndexedFileRow | undefined;
   assert.equal(updated?.mtime_ms, 9999);
+});
+
+test(".omp-episodic-ignore excludes matching session files", () => {
+  const root = join(tmpdir(), `indexer-ignore-${randomUUID()}`);
+  mkdirSync(root);
+  try {
+    writeFileSync(join(root, ".omp-episodic-ignore"), "secret-*.jsonl\n# comment\n\n");
+    writeFileSync(join(root, "secret-x.jsonl"), "{}\n");
+    writeFileSync(join(root, "public.jsonl"), "{}\n");
+
+    const files = findSessionFiles(root).map((file) => file.split("/").pop());
+    assert.deepEqual(files, ["public.jsonl"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

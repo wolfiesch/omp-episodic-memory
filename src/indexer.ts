@@ -1,7 +1,7 @@
 // Crawl OMP session transcripts, embed each exchange, and persist to the index DB.
 // All logging goes to stderr; progress is reported via the onProgress callback.
-import { readdirSync, statSync, type Dirent } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
+import { join, relative, sep } from "node:path";
 
 import Database from "better-sqlite3";
 import {
@@ -13,6 +13,37 @@ import { embedExchange, initEmbeddings } from "./embeddings.js";
 import { isSessionFile, iterateSessionFile, parseSessionFile } from "./parser.js";
 import { DEFAULT_SESSIONS_DIR } from "./types.js";
 import { serializeToolEvents, toolEventsIndexText } from "./tool-events.js";
+
+function globToRegExp(pattern: string): RegExp {
+  let source = "^";
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    const next = pattern[i + 1];
+    if (char === "*" && next === "*") {
+      source += ".*";
+      i++;
+    } else if (char === "*") {
+      source += "[^/]*";
+    } else {
+      source += char.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+    }
+  }
+  return new RegExp(`${source}$`);
+}
+
+export function matchesIgnore(relPath: string, patterns: string[]): boolean {
+  const normalized = relPath.split(sep).join("/");
+  return patterns.some((pattern) => globToRegExp(pattern).test(normalized));
+}
+
+function readIgnorePatterns(root: string): string[] {
+  const ignorePath = join(root, ".omp-episodic-ignore");
+  if (!existsSync(ignorePath)) return [];
+  return readFileSync(ignorePath, "utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+}
 
 export function findSessionFiles(root: string = DEFAULT_SESSIONS_DIR): string[] {
   const out: string[] = [];
@@ -35,8 +66,12 @@ export function findSessionFiles(root: string = DEFAULT_SESSIONS_DIR): string[] 
   };
 
   walk(root);
-  out.sort();
-  return out;
+  const patterns = readIgnorePatterns(root);
+  const filtered = patterns.length === 0
+    ? out
+    : out.filter((file) => !matchesIgnore(relative(root, file), patterns));
+  filtered.sort();
+  return filtered;
 }
 
 export interface IndexProgress {
@@ -186,7 +221,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
           );
           insertedForFile += inserted;
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (
           err &&
           typeof err === "object" &&

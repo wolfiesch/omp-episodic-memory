@@ -62,6 +62,8 @@ export interface MemoryRecord {
   reviewReason: string | null;
   /** Unix SECONDS the record was reviewed (status set), else null. */
   reviewedAt: number | null;
+  /** Current record points at the older record it supersedes, else null. */
+  supersedesMemoryId: number | null;
   /** >=1 provenance pointer. */
   sources: MemorySource[];
   createdAt: number;
@@ -115,6 +117,7 @@ export function initMemorySchema(db: Database.Database): void {
       status TEXT NOT NULL DEFAULT 'pending',
       review_reason TEXT,
       reviewed_at INTEGER,
+      supersedes_memory_id INTEGER,
       dedupe_key TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -164,6 +167,13 @@ export function initMemorySchema(db: Database.Database): void {
       // Column may have been added concurrently; ignore.
     }
   }
+  if (!names.has("supersedes_memory_id")) {
+    try {
+      db.exec(`ALTER TABLE memory_records ADD COLUMN supersedes_memory_id INTEGER`);
+    } catch {
+      // Column may have been added concurrently; ignore.
+    }
+  }
 }
 
 interface MemoryRow {
@@ -179,6 +189,7 @@ interface MemoryRow {
   status: string;
   review_reason: string | null;
   reviewed_at: number | null;
+  supersedes_memory_id: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -203,6 +214,7 @@ function hydrate(db: Database.Database, row: MemoryRow): MemoryRecord {
     status: row.status as MemoryStatus,
     reviewReason: row.review_reason ?? null,
     reviewedAt: row.reviewed_at ?? null,
+    supersedesMemoryId: row.supersedes_memory_id ?? null,
     sources: sources.map((s) => ({
       sessionId: s.session_id,
       ordinal: s.ordinal,
@@ -340,12 +352,33 @@ export function setMemoryValidTo(
   return info.changes > 0;
 }
 
+/** Update the superseded ancestor pointer. Returns true if a row changed. */
+export function setSupersedesMemoryId(
+  db: Database.Database,
+  id: number,
+  supersedesId: number | null,
+): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const info = db
+    .prepare(`UPDATE memory_records SET supersedes_memory_id = ?, updated_at = ? WHERE id = ?`)
+    .run(supersedesId, now, id);
+  return info.changes > 0;
+}
+
 /** Fetch a single record (with sources) by id, or null. */
 export function getMemoryRecord(db: Database.Database, id: number): MemoryRecord | null {
   const row = db.prepare(`SELECT * FROM memory_records WHERE id = ?`).get(id) as
     | MemoryRow
     | undefined;
   return row ? hydrate(db, row) : null;
+}
+
+/** Return the older record superseded by the current record, if linked. */
+export function getSupersededBy(db: Database.Database, currentId: number): MemoryRecord[] {
+  const current = getMemoryRecord(db, currentId);
+  if (current?.supersedesMemoryId === null || current?.supersedesMemoryId === undefined) return [];
+  const older = getMemoryRecord(db, current.supersedesMemoryId);
+  return older ? [older] : [];
 }
 
 function sanitizeFtsQuery(query: string): string {

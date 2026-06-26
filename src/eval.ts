@@ -24,6 +24,8 @@ export type EvalCategory =
   | "temporal"
   | "multi_session"
   | "gotcha"
+  | "runbook"
+  | "contradiction"
   | "abstain";
 
 /** One expected episode, keyed on stable (sessionId, ordinal) — not rowid. */

@@ -32,8 +32,8 @@ test("parseEvalQuestions parses valid lines and skips blanks", () => {
 test("runEval end-to-end metrics", async () => {
   const report = await runEval({ sessionsDir, questionsPath, mode: "text" });
   const m = report.metrics;
-  assert.equal(m.total, 7);
-  assert.equal(m.scored, 5);
+  assert.equal(m.total, 11);
+  assert.equal(m.scored, 8);
   assert.ok(m.recallAt5 >= 0.99);
   assert.equal(m.abstentionAccuracy, 1);
   assert.equal(m.falsePositiveRate, 0);
@@ -44,7 +44,7 @@ test("runEval end-to-end metrics", async () => {
 test("abstention results abstain and have null firstHitRank", async () => {
   const report = await runEval({ sessionsDir, questionsPath, mode: "text" });
   const abstainResults = report.results.filter((r) => r.mustAbstain === true);
-  assert.equal(abstainResults.length, 2);
+  assert.equal(abstainResults.length, 3);
   for (const r of abstainResults) {
     assert.equal(r.abstained, true);
     assert.equal(r.firstHitRank, null);

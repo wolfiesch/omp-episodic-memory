@@ -23,6 +23,7 @@ import { runExtractEval, formatExtractEvalReport } from "./extract-eval.js";
 import { runBench, formatBenchReport } from "./bench.js";
 import { scaffoldLabels, formatScaffoldJsonl } from "./label-scaffold.js";
 import { supersedeDecisions, memoryDiff } from "./supersede.js";
+import { runDoctor, type DoctorCheck } from "./doctor.js";
 import {
   setBlock,
   listBlocks,
@@ -609,6 +610,28 @@ function cmdBlocks(positional: string[], flags: Map<string, string>): void {
   }
 }
 
+function doctorSymbol(status: DoctorCheck["status"]): string {
+  if (status === "pass") return "✓";
+  if (status === "warn") return "!";
+  return "✗";
+}
+
+async function cmdDoctor(flags: Map<string, string>): Promise<void> {
+  const checks = await runDoctor({
+    dbPath: flags.get("db"),
+    sessionsDir: flags.get("sessions"),
+    probeModel: flags.get("probe-model") === "true",
+  });
+  if (flags.get("json") === "true") {
+    process.stdout.write(`${JSON.stringify(checks, null, 2)}\n`);
+  } else {
+    for (const check of checks) {
+      process.stdout.write(`${doctorSymbol(check.status)} ${check.name} — ${check.detail}\n`);
+    }
+  }
+  if (checks.some((check) => check.status === "fail")) process.exitCode = 1;
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseFlags(rest);
@@ -661,6 +684,9 @@ async function main(): Promise<void> {
     case "label-scaffold":
       cmdLabelScaffold(flags);
       break;
+    case "doctor":
+      await cmdDoctor(flags);
+      break;
     case "context":
       cmdContext(flags);
       break;
@@ -687,6 +713,7 @@ async function main(): Promise<void> {
           "  extract-eval [--sessions DIR] [--labels PATH] [--json]   Score extraction precision/duplicates\n" +
           "  bench    --questions PATH [--sessions DIR] [--labels PATH] [--mode text|both|vector] [--json]   OMP-MemBench (recall+extract, exit 1 on gate fail)\n" +
           "  label-scaffold [--sessions DIR] [--limit N]   Emit a labels.jsonl template from real-session candidates\n" +
+          "  doctor   [--db PATH] [--sessions DIR] [--probe-model true] [--json]   Diagnose setup\n" +
           "  context  [--db PATH] [--project P] [--limit N] [--json]   Pinned blocks + recent memory\n" +
           "  blocks   [list|set <kind>|rm <id>] [--db PATH] [--project P] [--content TEXT] [--json]\n\n" +
           "Terminal UI: --ui or OMP_EPISODIC_UI=1 enables ANSI panels only on TTY stdout; --plain and --json always use deterministic plain output.\n",

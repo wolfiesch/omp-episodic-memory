@@ -251,7 +251,7 @@ test("project filter scopes episode evidence and abstains when unmatched", async
   assert.deepEqual(missing.evidence, []);
 });
 
-test("formatBundle renders confidence tier and evidence lines", async () => {
+test("formatBundle renders grouped evidence sections", async () => {
   const bundle = await recallForTask(db, {
     task: "Why did we choose sqlite-vec for the index?",
     mode: "text",
@@ -259,7 +259,10 @@ test("formatBundle renders confidence tier and evidence lines", async () => {
   const text = formatBundle(bundle);
   assert.ok(text.length > 0);
   assert.ok(text.includes(bundle.confidence));
-  assert.ok(/^\d+\.\s/m.test(text), "expected at least one numbered evidence line");
+  assert.match(text, /## Relevant prior decisions/);
+  assert.match(text, /## Prior episodes/);
+  assert.doesNotMatch(text, /^Evidence:$/m);
+  assert.ok(/^-\s+\[decision\]/m.test(text), "expected grouped decision evidence line");
 });
 
 test("formatBundle renders tool summaries for episode evidence", async () => {
@@ -286,4 +289,27 @@ test("recommendedNextSteps is non-empty for answerable and abstain bundles", asy
   });
   assert.ok(Array.isArray(abstain.recommendedNextSteps));
   assert.ok(abstain.recommendedNextSteps.length > 0);
+});
+
+test("recall bundle exposes typed sections while preserving flat evidence", async () => {
+  const bundle = await recallForTask(db, {
+    task: "Why did we choose sqlite-vec for the index?",
+    mode: "text",
+  });
+
+  assert.ok(bundle.evidence.length >= 1);
+  assert.ok(bundle.sections.decisions.length >= 1);
+  const episodeCount = bundle.evidence.filter((ev) => ev.kind === "episode").length;
+  assert.equal(bundle.sections.episodes.length, episodeCount);
+});
+
+test("abstaining recall bundle records one abstention section item", async () => {
+  const bundle = await recallForTask(db, {
+    task: "configure the kubernetes helm chart autoscaler quux",
+    mode: "text",
+  });
+
+  assert.equal(bundle.answerable, false);
+  assert.equal(bundle.sections.abstentions.length, 1);
+  assert.equal(bundle.sections.abstentions[0], "configure the kubernetes helm chart autoscaler quux");
 });

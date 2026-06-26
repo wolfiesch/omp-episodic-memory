@@ -252,7 +252,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "recall_for_task",
       description:
-        "Before starting a coding task, retrieve an evidence-backed context packet from prior OMP sessions — distilled decisions, runbooks, and gotchas plus raw episode citations, with a confidence tier and explicit abstention when nothing relevant exists.",
+        "Before starting a coding task, retrieve an evidence-backed context packet from prior OMP sessions — grouped into decisions, gotchas, runbooks, project context, prior episodes, conflicts, and abstentions, with a confidence tier and raw citations.",
       inputSchema: {
         type: "object",
         properties: {

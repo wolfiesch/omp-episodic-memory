@@ -4,6 +4,7 @@
 import type Database from "better-sqlite3";
 import {
   listMemoryRecords,
+  setSupersedesMemoryId,
   setMemoryValidTo,
   updateMemoryStatus,
   type MemoryRecord,
@@ -123,6 +124,7 @@ export function supersedeDecisions(db: Database.Database): SupersedeResult {
       const older = ordered[i];
       updateMemoryStatus(db, older.id, "superseded");
       setMemoryValidTo(db, older.id, newest.validFrom);
+      setSupersedesMemoryId(db, newest.id, older.id);
       pairs.push({ olderId: older.id, newerId: newest.id, subject });
     }
   }

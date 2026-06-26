@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { isSessionFile, iterateSessionFile, parseSessionFile, parseSessionFileStream } from "../src/parser.js";
+import { serializeToolEvents } from "../src/tool-events.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(here, "fixtures", "sessions");
@@ -132,14 +133,14 @@ test("parseSessionFileStream and parseSessionFile throw error when file exceeds 
 		// Sync parser throws
 		assert.throws(() => {
 			parseSessionFile(tmpFile, { maxBytes: 10 });
-		}, (err: any) => {
+		}, (err: unknown) => {
 			return err instanceof Error && err.message.startsWith("session file too large");
 		});
 
 		// Stream parser throws
 		await assert.rejects(async () => {
 			await parseSessionFileStream(tmpFile, { maxBytes: 10 });
-		}, (err: any) => {
+		}, (err: unknown) => {
 			return err instanceof Error && err.message.startsWith("session file too large");
 		});
 	} finally {
@@ -255,6 +256,107 @@ test("parseSessionFileStream and parseSessionFile skip only pathologically long 
 		assert.equal(exchangesStream.length, 1);
 		assert.equal(exchangesStream[0].userText, "hi");
 		assert.equal(exchangesStream[0].assistantText, "hello");
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("parseSessionFile redacts secrets from exchange text and serialized tool events", () => {
+	const dir = mkdtempSync(join(tmpdir(), "parser-redact-"));
+	const tmpFile = join(
+		dir,
+		"2026-06-20T10-00-00-000Z_eeeeeeee-0000-7000-8000-000000000008.jsonl",
+	);
+	const key = `sk-${"A".repeat(30)}`;
+	const lines = [
+		'{"type":"session","version":3,"id":"eeeeeeee-0000-7000-8000-000000000008","timestamp":"2026-06-20T10:00:00.000Z","cwd":"/tmp/proj","title":"Redaction"}',
+		JSON.stringify({
+			type: "message",
+			id: "u1",
+			message: { role: "user", content: [{ type: "text", text: `use ${key}` }] },
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "a1",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "t1", name: "bash", arguments: { command: `OPENAI_API_KEY=${key} node script.js` } },
+					{ type: "text", text: `handled ${key}` },
+				],
+			},
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "r1",
+			message: {
+				role: "toolResult",
+				toolCallId: "t1",
+				toolName: "bash",
+				content: [{ type: "text", text: `result ${key}` }],
+				details: { env: { OPENAI_API_KEY: key } },
+			},
+		}),
+	];
+	writeFileSync(tmpFile, lines.join("\n"));
+	try {
+		const [exchange] = parseSessionFile(tmpFile);
+		assert.ok(exchange.userText.includes("[REDACTED]"));
+		assert.equal(exchange.userText.includes(key), false);
+		assert.equal(exchange.assistantText.includes(key), false);
+		const serialized = serializeToolEvents(exchange.toolEvents);
+		assert.match(serialized, /\[REDACTED\]/);
+		assert.equal(serialized.includes(key), false);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("parseSessionFile redacts secrets before clipping text", () => {
+	const dir = mkdtempSync(join(tmpdir(), "parser-redact-clip-"));
+	const tmpFile = join(
+		dir,
+		"2026-06-20T10-00-00-000Z_ffffffff-0000-7000-8000-000000000009.jsonl",
+	);
+	const key = `sk-${"A".repeat(30)}`;
+	const lines = [
+		'{"type":"session","version":3,"id":"ffffffff-0000-7000-8000-000000000009","timestamp":"2026-06-20T10:00:00.000Z","cwd":"/tmp/proj","title":"ClipRedaction"}',
+		JSON.stringify({
+			type: "message",
+			id: "u1",
+			message: { role: "user", content: [{ type: "text", text: `prefix ${key} suffix` }] },
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "a1",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "echo ok" } },
+					{ type: "text", text: `assistant ${key} suffix` },
+				],
+			},
+		}),
+		JSON.stringify({
+			type: "message",
+			id: "r1",
+			message: {
+				role: "toolResult",
+				toolCallId: "t1",
+				toolName: "bash",
+				content: [{ type: "text", text: `result ${key} suffix` }],
+			},
+		}),
+	];
+	writeFileSync(tmpFile, lines.join("\n"));
+	try {
+		const [exchange] = parseSessionFile(tmpFile, { maxExchangeChars: 12, maxToolResultChars: 12 });
+		assert.equal(exchange.userText.includes("sk-"), false);
+		assert.equal(exchange.assistantText.includes("sk-"), false);
+		assert.equal(exchange.userText.includes(key), false);
+		assert.equal(exchange.assistantText.includes(key), false);
+		assert.equal(exchange.toolEvents[0].resultText?.includes("sk-"), false);
+		assert.equal(exchange.toolEvents[0].resultText?.includes(key), false);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

@@ -3,6 +3,7 @@ import { basename } from "node:path";
 
 import type { Exchange, ToolEvent } from "./types.js";
 import { deriveCommand, deriveExitCode, deriveFilePaths, isRecord, normalizeArguments } from "./tool-events.js";
+import { redactSecrets, redactToolEvent } from "./redact.js";
 
 export function isSessionFile(name: string): boolean {
 	return name.endsWith(".jsonl");
@@ -84,11 +85,12 @@ interface PendingExchange {
 }
 
 function clipText(text: string, max: number): string {
-	if (text.length > max) {
-		const clipped = text.length - max;
-		return text.slice(0, max) + `\n\u2026[clipped ${clipped} chars]`;
+	const redacted = redactSecrets(text);
+	if (redacted.length > max) {
+		const clipped = redacted.length - max;
+		return redacted.slice(0, max) + `\n\u2026[clipped ${clipped} chars]`;
 	}
-	return text;
+	return redacted;
 }
 
 interface ParserOptions {
@@ -116,12 +118,13 @@ function flushPending(
 	if (pending === null) return null;
 	let exchange: Exchange | null = null;
 	if (pending.userText.trim().length > 0) {
-		const userText = pending.userText;
+		const userText = redactSecrets(pending.userText);
 		const joined = pending.assistantText.join("\n\n");
-		const assistantText =
+		const assistantText = redactSecrets(
 			pending.assistantDropped > 0
 				? `${joined}\n\u2026[clipped ${pending.assistantDropped} chars]`
-				: joined;
+				: joined,
+		);
 		exchange = {
 			sessionId: state.sessionId as string,
 			sourcePath: filePath,
@@ -132,7 +135,7 @@ function flushPending(
 			userText,
 			assistantText,
 			toolNames: pending.toolNames,
-			toolEvents: pending.toolEvents,
+			toolEvents: pending.toolEvents.map(redactToolEvent),
 		};
 		state.exchanges?.push(exchange);
 	}
@@ -239,20 +242,21 @@ function processMessageEvent(
 		const pending = state.pending;
 		for (const part of parts) {
 			if (part.type === "text" && part.text && part.text.length > 0) {
+				const text = redactSecrets(part.text);
 				const remaining = maxExchangeChars - pending.assistantLen;
 				if (remaining <= 0) {
 					// Cap already reached: count everything past it but store nothing more,
 					// so a single huge exchange cannot grow unbounded in memory.
-					pending.assistantDropped += part.text.length;
+					pending.assistantDropped += text.length;
 					continue;
 				}
-				if (part.text.length > remaining) {
-					pending.assistantText.push(part.text.slice(0, remaining));
+				if (text.length > remaining) {
+					pending.assistantText.push(text.slice(0, remaining));
 					pending.assistantLen += remaining;
-					pending.assistantDropped += part.text.length - remaining;
+					pending.assistantDropped += text.length - remaining;
 				} else {
-					pending.assistantText.push(part.text);
-					pending.assistantLen += part.text.length;
+					pending.assistantText.push(text);
+					pending.assistantLen += text.length;
 				}
 			} else if (part.type === "toolCall" && part.name) {
 				const args = normalizeArguments(part.arguments);

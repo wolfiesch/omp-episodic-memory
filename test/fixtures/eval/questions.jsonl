@@ -5,3 +5,7 @@
 {"id":"q-exact-dyld","query":"the sqlite-vec dyld symbol error on macOS install","category":"exact","expectedEpisodes":[{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0}]}
 {"id":"q-abstain-supabase","query":"How do we integrate Supabase realtime websockets zzqqxx?","category":"abstain","mustAbstain":true}
 {"id":"q-abstain-kubernetes","query":"configure the kubernetes helm chart autoscaler quux","category":"abstain","mustAbstain":true}
+{"id":"q-runbook-publish","query":"What is the runbook for publishing the package?","category":"runbook","expectedMemoryTitles":["Runbook for publishing"],"expectedEpisodes":[{"sessionId":"bbbbbbbb-0000-7000-8000-000000000002","ordinal":0}]}
+{"id":"q-contradiction-recall-cache","query":"What is the current decision for recall cache storage after stale reads?","category":"contradiction","expectedMemoryTitles":["store recall cache in SQLite"]}
+{"id":"q-gotcha-bun-native","query":"What should we avoid when running native module tests under Bun?","category":"gotcha","expectedMemoryTitles":["Avoid running the test suite with bun test"]}
+{"id":"q-abstain-cloudflare","query":"configure Cloudflare durable objects migration zxqv","category":"abstain","mustAbstain":true}

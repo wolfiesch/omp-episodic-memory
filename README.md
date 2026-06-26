@@ -42,6 +42,29 @@ Read-only with respect to OMP state: it never edits, compresses, or curates OMP'
 
 ## Why not just use OMP memory?
 
+### What this is
+
+OMP Hindsight and Mnemopi are curated operational memory for the agent's working context. `omp-episodic-memory` is read-only forensic transcript memory: exact evidence, raw-session citations, and a reviewable inbox for derived decisions, runbooks, and gotchas. It never modifies OMP state.
+
+| Need | Use OMP native memory | Use omp-episodic-memory |
+| --- | --- | --- |
+| Remember preferences | Yes. Store durable user and project preferences for automatic use. | Optional. Use transcripts as evidence before promoting a preference. |
+| Auto-recall at session start | Yes. Native memory is built for ambient context. | No. Recall is explicit and task-scoped. |
+| Audit a prior session verbatim | No. Curated memory is compressed. | Yes. Search and read exact transcript exchanges. |
+| Trace memory to exact exchange | Limited. Summaries may omit raw provenance. | Yes. Every result carries session, path, and ordinal. |
+| Review before promoting derived memory | Limited. Native memory is already curated. | Yes. `extract` proposes records into an approve/reject inbox. |
+| Avoid writing to OMP state | No. Native memory is OMP state. | Yes. The index is separate and read-only toward OMP. |
+| Debug stale/contradictory memory | Limited. You see the current distilled view. | Yes. Compare decisions, supersession, and source evidence. |
+
+| Project | Lane | Relationship |
+| --- | --- | --- |
+| Native OMP memory | Curated working memory for agents. | Complement: this tool supplies transcript evidence before you update native memory. |
+| Obra episodic-memory | Episodic memory for agent experience. | Closest neighbor, with this project focused on local OMP transcript forensics and review. |
+| Mem0 | General-purpose application memory service/framework. | Different lane: this project favors local-first evidence over broad app memory APIs. |
+| Zep/Graphiti | Graph-backed long-term memory for agents and apps. | Different lane: this project keeps a narrow, read-only transcript index with provenance. |
+| Letta | Stateful agent runtime with memory as part of the agent system. | Different lane: this project is an external audit and recall layer for existing OMP sessions. |
+
+
 OMP's built-in memory is curated and compressed — a distilled view optimized for the agent's working context. That is useful, but it is lossy: the original wording, the dead ends, and the precise moment a decision was made are gone.
 
 This tool takes the opposite stance. It indexes the **raw transcripts** as they sit on disk and gives you provenance back to the exact conversation and exchange. Use it to answer:
@@ -143,7 +166,7 @@ Environment:
 
 ## Benchmarks
 
-The `eval` command runs a reproducible recall benchmark over a fixture set of questions and sessions:
+The `eval` command runs a reproducible recall benchmark over a fixture set of exact, decision, procedural, temporal, multi-session, gotcha, runbook, contradiction, and abstention questions:
 
 ```sh
 omp-episodic eval --questions <file> --sessions <dir> --mode text

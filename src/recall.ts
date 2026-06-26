@@ -7,7 +7,7 @@
 import type Database from "better-sqlite3";
 
 import { search } from "./search.js";
-import { searchMemoryRecords, type MemoryRecord, type MemoryType } from "./memory.js";
+import { getSupersededBy, searchMemoryRecords, type MemoryRecord, type MemoryType } from "./memory.js";
 import type { SearchHit, SearchMode, ToolEvent } from "./types.js";
 import { formatToolEventSummary } from "./tool-events.js";
 
@@ -49,6 +49,22 @@ export interface RecallEvidence {
   toolEvents?: ToolEvent[];
 }
 
+export interface RecallConflict {
+  subject: string;
+  current: RecallEvidence;
+  superseded: RecallEvidence;
+}
+
+export interface RecallSections {
+  decisions: RecallEvidence[];
+  gotchas: RecallEvidence[];
+  runbooks: RecallEvidence[];
+  projectContext: RecallEvidence[];
+  episodes: RecallEvidence[];
+  conflicts: RecallConflict[];
+  abstentions: string[];
+}
+
 export interface RecallBundle {
   answerable: boolean;
   confidence: RecallConfidence;
@@ -57,6 +73,7 @@ export interface RecallBundle {
   summary: string;
   /** Compact text optimized for injection into the next agent turn. */
   suggestedContext: string;
+  sections: RecallSections;
   evidence: RecallEvidence[];
   recommendedNextSteps: string[];
 }
@@ -203,6 +220,46 @@ function memoryToEvidence(rec: MemoryRecord): RecallEvidence {
     quote: clip(rec.body, 240),
     score: rec.confidence,
   };
+}
+
+function buildSections(
+  evidence: RecallEvidence[],
+  answerable: boolean,
+  task: string,
+  conflicts: RecallConflict[] = [],
+): RecallSections {
+  return {
+    decisions: evidence.filter((ev) => ev.kind === "decision"),
+    gotchas: evidence.filter((ev) => ev.kind === "gotcha"),
+    runbooks: evidence.filter((ev) => ev.kind === "runbook"),
+    projectContext: evidence.filter((ev) =>
+      ev.kind === "fact" || ev.kind === "project_state" || ev.kind === "preference",
+    ),
+    episodes: evidence.filter((ev) => ev.kind === "episode"),
+    conflicts,
+    abstentions: answerable ? [] : [clip(task, 120)],
+  };
+}
+
+const SECTION_ORDER: Array<{
+  key: keyof Pick<
+    RecallSections,
+    "decisions" | "gotchas" | "runbooks" | "projectContext" | "episodes"
+  >;
+  title: string;
+}> = [
+  { key: "decisions", title: "Relevant prior decisions" },
+  { key: "gotchas", title: "Gotchas" },
+  { key: "runbooks", title: "Runbook snippets" },
+  { key: "projectContext", title: "Project context" },
+  { key: "episodes", title: "Prior episodes" },
+];
+
+function formatEvidenceLine(ev: RecallEvidence): string {
+  const toolLine = ev.toolEvents?.length
+    ? ` Tools: ${ev.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 80)).join("; ")}`
+    : "";
+  return `- [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}: ${ev.quote}${toolLine}`;
 }
 
 /** Map intents to the memory types they should pull. */
@@ -364,22 +421,49 @@ export async function recallForTask(
     summary = `Found ${parts.join(" and ")} relevant to: "${clip(opts.task, 100)}" (confidence: ${confidence}).`;
   }
 
+  const conflicts: RecallConflict[] = [];
+  for (const memory of memories) {
+    if (memory.type !== "decision") continue;
+    for (const older of getSupersededBy(db, memory.id)) {
+      conflicts.push({
+        subject: memory.title,
+        current: memoryToEvidence(memory),
+        superseded: memoryToEvidence(older),
+      });
+    }
+  }
+
+  const sections = buildSections(evidence, answerable, opts.task, conflicts);
+
   // Assemble suggested context within the token budget.
   const lines: string[] = [];
   let usedTokens = Math.ceil(summary.length / CHARS_PER_TOKEN);
-  for (const ev of evidence) {
-    const toolLine = ev.toolEvents?.length
-      ? ` Tools: ${ev.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 80)).join("; ")}`
-      : "";
-    const line = `- [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}: ${ev.quote}${toolLine}`;
+  const pushBudgeted = (line: string): boolean => {
     const cost = Math.ceil(line.length / CHARS_PER_TOKEN);
-    if (usedTokens + cost > maxTokens) break;
+    if (usedTokens + cost > maxTokens) return false;
     lines.push(line);
     usedTokens += cost;
+    return true;
+  };
+  for (const section of SECTION_ORDER) {
+    const items = sections[section.key];
+    if (items.length === 0) continue;
+    if (!pushBudgeted(`## ${section.title}`)) break;
+    for (const ev of items) {
+      if (!pushBudgeted(formatEvidenceLine(ev))) break;
+    }
   }
-  const suggestedContext = answerable
-    ? `${summary}\n${lines.join("\n")}`.trim()
-    : summary;
+  if (sections.conflicts.length > 0 && pushBudgeted("## Conflicts / stale facts")) {
+    for (const conflict of sections.conflicts) {
+      if (!pushBudgeted(`- ${conflict.subject}: current "${conflict.current.title}" supersedes "${conflict.superseded.title}"`)) break;
+    }
+  }
+  if (sections.abstentions.length > 0 && pushBudgeted("## Abstention")) {
+    for (const abstention of sections.abstentions) {
+      if (!pushBudgeted(`- Not enough evidence for: ${abstention}`)) break;
+    }
+  }
+  const suggestedContext = `${summary}\n${lines.join("\n")}`.trim();
 
   return {
     answerable,
@@ -388,6 +472,7 @@ export async function recallForTask(
     memoryTypesUsed,
     summary,
     suggestedContext,
+    sections,
     evidence,
     recommendedNextSteps: nextSteps(intents, { episodes, memories }),
   };
@@ -399,17 +484,33 @@ export function formatBundle(bundle: RecallBundle): string {
   lines.push(`**Recall** — confidence: ${bundle.confidence} | intents: ${bundle.intents.join(", ")}`);
   lines.push("");
   lines.push(bundle.summary);
-  if (bundle.evidence.length > 0) {
+  for (const section of SECTION_ORDER) {
+    const items = bundle.sections[section.key];
+    if (items.length === 0) continue;
     lines.push("");
-    lines.push("Evidence:");
-    bundle.evidence.forEach((ev, i) => {
+    lines.push(`## ${section.title}`);
+    for (const ev of items) {
       const loc = ev.path ? ` — ${ev.path}${ev.ordinal !== null ? `#${ev.ordinal}` : ""}` : "";
-      lines.push(`${i + 1}. [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}${loc}`);
-      lines.push(`   ${ev.quote}`);
+      lines.push(`- [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}${loc}`);
+      lines.push(`  ${ev.quote}`);
       if (ev.toolEvents?.length) {
-        lines.push(`   Tools: ${ev.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 80)).join("; ")}`);
+        lines.push(`  Tools: ${ev.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 80)).join("; ")}`);
       }
-    });
+    }
+  }
+  if (bundle.sections.conflicts.length > 0) {
+    lines.push("");
+    lines.push("## Conflicts / stale facts");
+    for (const conflict of bundle.sections.conflicts) {
+      lines.push(`- ${conflict.subject}: current "${conflict.current.title}" supersedes "${conflict.superseded.title}"`);
+    }
+  }
+  if (bundle.sections.abstentions.length > 0) {
+    lines.push("");
+    lines.push("## Abstention");
+    for (const abstention of bundle.sections.abstentions) {
+      lines.push(`- Not enough evidence for: ${abstention}`);
+    }
   }
   lines.push("");
   lines.push("Recommended next steps:");
