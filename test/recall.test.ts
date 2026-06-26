@@ -12,6 +12,7 @@ import { parseSessionFile } from "../src/parser.js";
 import { findSessionFiles } from "../src/indexer.js";
 import { extract } from "../src/extractor.js";
 import { listMemoryRecords, updateMemoryStatus } from "../src/memory.js";
+import { supersedeDecisions } from "../src/supersede.js";
 import {
   classifyIntents,
   recallForTask,
@@ -312,4 +313,47 @@ test("abstaining recall bundle records one abstention section item", async () =>
   assert.equal(bundle.answerable, false);
   assert.equal(bundle.sections.abstentions.length, 1);
   assert.equal(bundle.sections.abstentions[0], "configure the kubernetes helm chart autoscaler quux");
+});
+
+test("recall surfaces a superseded decision as a conflict in its own DB", async () => {
+  // Isolated DB so superseding approved memories cannot perturb shared-DB tests.
+  const isoPath = join(tmpdir(), "omp-recall-conflict-" + randomUUID() + ".db");
+  const iso = openDb(isoPath);
+  try {
+    let seed = 1000;
+    for (const file of findSessionFiles(FIX)) {
+      for (const ex of parseSessionFile(file)) {
+        insertExchange(iso, toInsertable(ex, seed++));
+      }
+    }
+    extract({ dbPath: isoPath, sessionsDir: FIX });
+    for (const rec of listMemoryRecords(iso, "pending", 1000)) {
+      updateMemoryStatus(iso, rec.id, "approved");
+    }
+    const result = supersedeDecisions(iso);
+    assert.ok(result.superseded >= 1, "fixture has at least one superseded decision");
+
+    const bundle = await recallForTask(iso, {
+      task: "What is the current decision for recall cache storage after stale reads?",
+      mode: "text",
+    });
+    assert.ok(bundle.sections.conflicts.length >= 1, "recall surfaces at least one conflict");
+    const conflict = bundle.sections.conflicts.find((c) =>
+      c.current.title.includes("SQLite") && c.superseded.title.includes("JSON"),
+    );
+    assert.ok(conflict, "the SQLite-over-JSON cache conflict is surfaced");
+    assert.ok(
+      formatBundle(bundle).includes("## Conflicts / stale facts"),
+      "formatted bundle renders the conflicts section",
+    );
+  } finally {
+    iso.close();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(isoPath + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
 });

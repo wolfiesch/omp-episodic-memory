@@ -228,6 +228,160 @@ test("supersedeDecisions marks older same-topic decision superseded", () => {
   assert.equal(newer.status, "approved", "newer record remains approved");
 });
 
+test("supersedeDecisions does not link unrelated decisions sharing only a first token", () => {
+  const FP_PROJECT = "/Users/dev/false-positive";
+  const releaseA = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Pin the release workflow to Node 22 for glob expansion",
+    body: "We decided to pin the release workflow to Node 22.",
+    project: FP_PROJECT,
+    validFrom: 100,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(0)],
+  });
+  const releaseB = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Release checklist should document provenance publishing",
+    body: "We decided the release checklist documents npm provenance.",
+    project: FP_PROJECT,
+    validFrom: 200,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(1)],
+  });
+
+  supersedeDecisions(db);
+
+  // Both share only the leading token "release" (< 2 overlap) -> neither superseded.
+  assert.equal(getMemoryRecord(db, releaseA)?.status, "approved", "first release decision stays approved");
+  assert.equal(getMemoryRecord(db, releaseB)?.status, "approved", "second release decision stays approved");
+  assert.equal(getMemoryRecord(db, releaseA)?.supersedesMemoryId ?? null, null);
+  assert.equal(getMemoryRecord(db, releaseB)?.supersedesMemoryId ?? null, null);
+});
+
+test("supersedeDecisions isolates two real subjects sharing a first-token bucket", () => {
+  const COMP_PROJECT = "/Users/dev/components";
+  // Bucket "store": a genuine cache pair plus an unrelated, newer telemetry decision.
+  const cacheJson = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Store recall cache in JSON files while prototyping",
+    body: "We decided to store recall cache in JSON files.",
+    project: COMP_PROJECT,
+    validFrom: 100,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(0)],
+  });
+  const cacheSqlite = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Store recall cache in SQLite instead of JSON files",
+    body: "We decided to store recall cache in SQLite.",
+    project: COMP_PROJECT,
+    validFrom: 200,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(1)],
+  });
+  const telemetry = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Store telemetry events in Kafka topics",
+    body: "We decided to store telemetry events in Kafka.",
+    project: COMP_PROJECT,
+    validFrom: 300,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(2)],
+  });
+
+  supersedeDecisions(db);
+
+  // The genuine cache pair supersedes even though telemetry is the bucket's newest.
+  assert.equal(getMemoryRecord(db, cacheJson)?.status, "superseded", "JSON cache decision superseded");
+  assert.equal(getMemoryRecord(db, cacheSqlite)?.supersedesMemoryId, cacheJson, "SQLite cache supersedes JSON cache");
+  assert.equal(getMemoryRecord(db, cacheSqlite)?.status, "approved", "SQLite cache decision stays current");
+  // The unrelated telemetry decision shares only "store" with the pair -> untouched.
+  assert.equal(getMemoryRecord(db, telemetry)?.status, "approved", "telemetry decision stays approved");
+  assert.equal(getMemoryRecord(db, telemetry)?.supersedesMemoryId ?? null, null, "telemetry supersedes nothing");
+});
+
+test("supersedeDecisions does not link compatible sqlite-vec decisions sharing only one token", () => {
+  const SV_PROJECT = "/Users/dev/sqlite-vec-fp";
+  const pin = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Pin sqlite-vec to 0.1.6 to keep ABI stability",
+    body: "We decided to pin sqlite-vec to 0.1.6.",
+    project: SV_PROJECT,
+    validFrom: 100,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(0)],
+  });
+  const use = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Use sqlite-vec because it keeps the whole index local-first",
+    body: "We decided to use sqlite-vec for a local-first index.",
+    project: SV_PROJECT,
+    validFrom: 200,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(1)],
+  });
+
+  supersedeDecisions(db);
+
+  // They share only "sqlite" (the "vec" suffix tokenizes with it) -> not a contradiction.
+  assert.equal(getMemoryRecord(db, pin)?.status, "approved", "pin decision stays approved");
+  assert.equal(getMemoryRecord(db, use)?.status, "approved", "use decision stays approved");
+  assert.equal(getMemoryRecord(db, pin)?.supersedesMemoryId ?? null, null);
+  assert.equal(getMemoryRecord(db, use)?.supersedesMemoryId ?? null, null);
+});
+
+test("supersedeDecisions treats the overlap relation as non-transitive in a chain", () => {
+  const CHAIN_PROJECT = "/Users/dev/chain";
+  // A overlaps B (>=2 tokens), B overlaps C (>=2), but A and C share only "cache".
+  const a = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Cache vector embeddings for speed",
+    body: "We decided to cache vector embeddings.",
+    project: CHAIN_PROJECT,
+    validFrom: 100,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(0)],
+  });
+  const b = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Cache vector embeddings on disk instead",
+    body: "We decided to cache vector embeddings on disk.",
+    project: CHAIN_PROJECT,
+    validFrom: 200,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(1)],
+  });
+  const c = insertMemoryRecord(db, {
+    type: "decision",
+    title: "Cache disk compaction runs nightly",
+    body: "We decided cache disk compaction runs nightly.",
+    project: CHAIN_PROJECT,
+    validFrom: 300,
+    confidence: 0.9,
+    status: "approved",
+    sources: [source(2)],
+  });
+
+  supersedeDecisions(db);
+
+  // A∩B = {cache,vector,embeddings}; B∩C = {cache,disk}; A∩C = {cache} only.
+  // Each record links to its nearest earlier overlapping record: B<-A, C<-B.
+  assert.equal(getMemoryRecord(db, a)?.status, "superseded", "A superseded by B");
+  assert.equal(getMemoryRecord(db, b)?.supersedesMemoryId, a, "B supersedes A (direct overlap)");
+  assert.equal(getMemoryRecord(db, b)?.status, "superseded", "B superseded by C");
+  assert.equal(getMemoryRecord(db, c)?.supersedesMemoryId, b, "C supersedes B, never jumps to A");
+  assert.equal(getMemoryRecord(db, c)?.status, "approved", "C stays current");
+});
+
 test("memoryDiff reports new and superseded decisions after a cutoff", () => {
   const diff = memoryDiff(db, { project: "/Users/dev/supersede-only", after: 150 });
   assert.ok(

@@ -76,11 +76,36 @@ function significantTokens(title: string): string[] {
     .filter((t) => t.length >= 4 && STOPWORDS[t] !== true);
 }
 
-/** The deterministic subject key for a decision: project + first significant token. */
+/** Significant title tokens as a set, for subject-overlap comparison. */
+function significantTokenSet(rec: MemoryRecord): Set<string> {
+  return new Set(significantTokens(rec.title));
+}
+
+/**
+ * The deterministic grouping key for a decision: project + first significant
+ * title token. This is a cheap bucket; final pairing also requires a real
+ * subject overlap (see `sharesSubject`) so unrelated decisions that merely share
+ * a leading word are not falsely linked.
+ */
 function subjectKey(rec: MemoryRecord): string | null {
   const tokens = significantTokens(rec.title);
   if (tokens.length === 0) return null;
   return `${rec.project ?? ""}\u0000${tokens[0]}`;
+}
+
+/** Minimum number of shared significant tokens required to call two decisions the same subject. */
+const MIN_SUBJECT_OVERLAP = 2;
+
+/** Two decisions share a subject when they overlap on at least MIN_SUBJECT_OVERLAP significant tokens. */
+function sharesSubject(a: Set<string>, b: Set<string>): boolean {
+  let overlap = 0;
+  for (const token of a) {
+    if (b.has(token)) {
+      overlap += 1;
+      if (overlap >= MIN_SUBJECT_OVERLAP) return true;
+    }
+  }
+  return false;
 }
 
 /** Order comparator: validFrom ascending (nulls last), then id ascending. */
@@ -95,10 +120,19 @@ function olderFirst(a: MemoryRecord, b: MemoryRecord): number {
 }
 
 /**
- * Mark older decisions as superseded by the newest decision sharing the same
- * subject (same project + same first significant title token). Within a group
- * the newest (by validFrom, then id) is current; each older record is set to
- * status "superseded" with its valid_to closed at the newer record's validFrom.
+ * Mark older decisions as superseded by a newer decision on the same subject.
+ * Decisions are bucketed by project + first significant title token; within a
+ * bucket, each record is linked to the NEAREST earlier record it directly shares
+ * a real subject with (>= MIN_SUBJECT_OVERLAP significant tokens), checked
+ * pairwise. Because the link is stored on the newer record (its
+ * `supersedes_memory_id` points at the one record it replaced), driving the scan
+ * per-newer keeps that column single-valued and lossless: distinct newers record
+ * their own predecessor, and successive same-subject revisions form a chain
+ * (r1 <- r2 <- r3). The overlap relation is intentionally non-transitive, so an
+ * unrelated decision merely sharing a first token (or an interleaved revision of
+ * a different real subject) is never linked. A record with no compatible earlier
+ * record stays current. Each superseded record is set to status "superseded"
+ * with valid_to closed at its successor's validFrom.
  */
 export function supersedeDecisions(db: Database.Database): SupersedeResult {
   const approved = listMemoryRecords(db, "approved", Number.MAX_SAFE_INTEGER);
@@ -118,14 +152,24 @@ export function supersedeDecisions(db: Database.Database): SupersedeResult {
   for (const [key, members] of groups) {
     if (members.length < 2) continue;
     const ordered = [...members].sort(olderFirst);
-    const newest = ordered[ordered.length - 1];
+    const tokenSets = ordered.map(significantTokenSet);
     const subject = key.split("\u0000")[1];
-    for (let i = 0; i < ordered.length - 1; i++) {
-      const older = ordered[i];
+    for (let j = ordered.length - 1; j > 0; j--) {
+      // Link this record to the nearest earlier record it directly overlaps.
+      let predecessor = -1;
+      for (let i = j - 1; i >= 0; i--) {
+        if (sharesSubject(tokenSets[j], tokenSets[i])) {
+          predecessor = i;
+          break;
+        }
+      }
+      if (predecessor === -1) continue;
+      const newer = ordered[j];
+      const older = ordered[predecessor];
       updateMemoryStatus(db, older.id, "superseded");
-      setMemoryValidTo(db, older.id, newest.validFrom);
-      setSupersedesMemoryId(db, newest.id, older.id);
-      pairs.push({ olderId: older.id, newerId: newest.id, subject });
+      setMemoryValidTo(db, older.id, newer.validFrom);
+      setSupersedesMemoryId(db, newer.id, older.id);
+      pairs.push({ olderId: older.id, newerId: newer.id, subject });
     }
   }
 
