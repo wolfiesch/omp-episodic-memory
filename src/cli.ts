@@ -33,6 +33,13 @@ import {
 } from "./blocks.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
 import { formatToolEventSummary } from "./tool-events.js";
+import {
+  renderInboxPanel,
+  renderRecallPanel,
+  renderSearchPanel,
+  renderStatsPanel,
+  shouldUseTerminalUi,
+} from "./terminal-ui.js";
 
 function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string> } {
   const positional: string[] = [];
@@ -53,6 +60,20 @@ function parseFlags(args: string[]): { positional: string[]; flags: Map<string, 
     }
   }
   return { positional, flags };
+}
+
+function wantsTerminalUi(flags: Map<string, string>): boolean {
+  return shouldUseTerminalUi({
+    isTty: process.stdout.isTTY === true,
+    json: flags.get("json") === "true",
+    plain: flags.get("plain") === "true",
+    requested: flags.get("ui") === "true",
+    env: process.env.OMP_EPISODIC_UI,
+  });
+}
+
+function terminalWidth(): number {
+  return process.stdout.columns ?? 88;
 }
 
 function toEpochSeconds(dateStr: string | undefined): number | undefined {
@@ -155,6 +176,10 @@ async function cmdSearch(positional: string[], flags: Map<string, string>): Prom
     process.stdout.write(JSON.stringify(hits, null, 2) + "\n");
     return;
   }
+  if (wantsTerminalUi(flags)) {
+    process.stdout.write(renderSearchPanel(query, hits, { ansi: true, width: terminalWidth() }) + "\n");
+    return;
+  }
   if (hits.length === 0) {
     process.stdout.write(`No results for "${query}".\n`);
     return;
@@ -212,7 +237,11 @@ async function cmdRecall(positional: string[], flags: Map<string, string>): Prom
     process.stdout.write(JSON.stringify(bundle, null, 2) + "\n");
     return;
   }
-  process.stdout.write(formatBundle(bundle) + "\n");
+  process.stdout.write(
+    wantsTerminalUi(flags)
+      ? renderRecallPanel(bundle, { ansi: true, width: terminalWidth() }) + "\n"
+      : formatBundle(bundle) + "\n",
+  );
 }
 
 function cmdStats(flags: Map<string, string>): void {
@@ -220,6 +249,10 @@ function cmdStats(flags: Map<string, string>): void {
   const db = openReadOnlyDb(dbPath);
   const s = getStats(db);
   db.close();
+  if (wantsTerminalUi(flags)) {
+    process.stdout.write(renderStatsPanel(dbPath, s, { ansi: true, width: terminalWidth() }) + "\n");
+    return;
+  }
   const fmt = (t: number | null) => (t ? new Date(t * 1000).toISOString().slice(0, 10) : "n/a");
   process.stdout.write(
     `Index: ${dbPath}\n` +
@@ -289,6 +322,10 @@ function cmdInbox(flags: Map<string, string>): void {
   db.close();
   if (flags.get("json") === "true") {
     process.stdout.write(`${JSON.stringify(records, null, 2)}\n`);
+    return;
+  }
+  if (wantsTerminalUi(flags)) {
+    process.stdout.write(renderInboxPanel(status, records, { ansi: true, width: terminalWidth() }) + "\n");
     return;
   }
   if (records.length === 0) {
@@ -636,11 +673,11 @@ async function main(): Promise<void> {
           "Commands:\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
           "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
-          "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--json]\n" +
-          "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--json]\n" +
-          "  stats    [--db PATH]                              Show index statistics\n" +
+          "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--ui] [--plain] [--json]\n" +
+          "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--ui] [--plain] [--json]\n" +
+          "  stats    [--db PATH] [--ui] [--plain]              Show index statistics\n" +
           "  extract  [--db PATH] [--sessions DIR] [--since YYYY-MM-DD] [--project P] [--max N] [--dry-run] [--json]\n" +
-          "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--json]\n" +
+          "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--ui] [--plain] [--json]\n" +
           "  approve  <id> [--db PATH]                         Approve a derived memory\n" +
           "  reject   <id> [--db PATH] [--reason TEXT]         Reject a derived memory\n" +
           "  memories <query> [--db PATH] [--type T] [--project P] [--status S] [--limit N] [--json]\n" +
@@ -651,7 +688,8 @@ async function main(): Promise<void> {
           "  bench    --questions PATH [--sessions DIR] [--labels PATH] [--mode text|both|vector] [--json]   OMP-MemBench (recall+extract, exit 1 on gate fail)\n" +
           "  label-scaffold [--sessions DIR] [--limit N]   Emit a labels.jsonl template from real-session candidates\n" +
           "  context  [--db PATH] [--project P] [--limit N] [--json]   Pinned blocks + recent memory\n" +
-          "  blocks   [list|set <kind>|rm <id>] [--db PATH] [--project P] [--content TEXT] [--json]\n",
+          "  blocks   [list|set <kind>|rm <id>] [--db PATH] [--project P] [--content TEXT] [--json]\n\n" +
+          "Terminal UI: --ui or OMP_EPISODIC_UI=1 enables ANSI panels only on TTY stdout; --plain and --json always use deterministic plain output.\n",
       );
       process.exitCode = cmd ? 1 : 0;
   }

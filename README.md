@@ -106,6 +106,7 @@ omp-episodic search "sqlite-vec" --mode text    # keyword-only search
 omp-episodic search "Command exited with code 1" --mode text --tool bash --tool-error true
 omp-episodic recall "fix flaky vector search"   # task-scoped evidence bundle
 omp-episodic stats                              # index statistics
+omp-episodic recall "fix flaky vector search" --ui # OMP-styled TTY panel
 ```
 
 ### Command reference
@@ -127,7 +128,9 @@ omp-episodic stats                              # index statistics
 | `context` | Show pinned project-context blocks plus recent approved decisions/gotchas/runbooks. |
 | `blocks` | Manage pinned project-context blocks (`list`, `set <kind>`, `rm <id>`). |
 
-Common flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--project P`, `--json`, `--db PATH`, `--sessions DIR`, `--max N`.
+Common flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--project P`, `--json`, `--ui`, `--plain`, `--db PATH`, `--sessions DIR`, `--max N`.
+
+Terminal polish: `--ui` (or `OMP_EPISODIC_UI=1`) enables an ANSI `π recall` panel for TTY output on `search`, `recall`, `stats`, and `inbox`. Piped output, `--json`, and `--plain` always stay deterministic for scripts and tests.
 
 Environment:
 
