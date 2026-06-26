@@ -11,7 +11,7 @@ import {
   type InsertableExchange,
 } from "./db.js";
 import { embedExchange, initEmbeddings } from "./embeddings.js";
-import { isSessionFile, parseSessionFile } from "./parser.js";
+import { isSessionFile, parseSessionFile, parseSessionFileStream } from "./parser.js";
 import { DEFAULT_SESSIONS_DIR } from "./types.js";
 
 export function findSessionFiles(root: string = DEFAULT_SESSIONS_DIR): string[] {
@@ -51,6 +51,7 @@ export interface IndexOptions {
   sessionsDir?: string;
   maxFiles?: number;
   force?: boolean;
+  maxBytes?: number;
   /**
    * When set, skip files whose mtime changed less than this many ms ago
    * (still likely being written). Used by watch mode; default unset = index all.
@@ -62,6 +63,7 @@ export interface IndexOptions {
 export interface IndexResult {
   filesProcessed: number;
   filesSkipped: number;
+  filesSkippedOversize: number;
   exchangesUpserted: number;
 }
 
@@ -112,6 +114,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
 
     let filesProcessed = 0;
     let filesSkipped = 0;
+    let filesSkippedOversize = 0;
     let exchangesUpserted = 0;
 
     for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
@@ -133,7 +136,25 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         continue;
       }
 
-      const exchanges = parseSessionFile(file);
+      let exchanges;
+      try {
+        exchanges = await parseSessionFileStream(file, {
+          maxBytes: opts.maxBytes ?? 200 * 1024 * 1024,
+        });
+      } catch (err: any) {
+        if (
+          err &&
+          typeof err === "object" &&
+          "message" in err &&
+          typeof err.message === "string" &&
+          err.message.startsWith("session file too large")
+        ) {
+          filesSkippedOversize++;
+          process.stderr.write(`Skipping file ${file} as it is too large: ${err.message}\n`);
+          continue;
+        }
+        throw err;
+      }
 
       // Compute embeddings first (async); better-sqlite3 transactions cannot span await.
       // Embedding is the costly step, so skip exchanges whose stored row already
@@ -194,7 +215,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       });
     }
 
-    return { filesProcessed, filesSkipped, exchangesUpserted };
+    return { filesProcessed, filesSkipped, filesSkippedOversize, exchangesUpserted };
   } finally {
     db.close();
   }

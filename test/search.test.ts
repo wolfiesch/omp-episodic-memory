@@ -169,3 +169,66 @@ test("vector mode returns hits over synthetic embeddings", async () => {
     .all(new Uint8Array(fakeEmbedding(0).buffer), 3) as Array<{ rowid: number | bigint }>;
   assert.ok(rows.length >= 1, "vec0 nearest-neighbour query should return rows");
 });
+
+test("query matching long assistant reply yields combined U+A snippet with non-empty assistantSnippet", async () => {
+  const hits = await search(db, { query: "sqlite-vec", mode: "text" });
+  assert.ok(hits.length >= 1, "expected at least one hit");
+  const hit = hits.find((h) => h.sessionId.startsWith("aaaaaaaa") && h.ordinal === 0);
+  assert.ok(hit, "expected to find the first exchange in session aaaaaaaa");
+  // Combined labeled excerpt: assistant evidence is surfaced (not just the user command).
+  assert.ok(hit.snippet.includes("A: "), `snippet should include assistant evidence, got: ${hit.snippet}`);
+  assert.ok(
+    hit.snippet.includes("This is a known gotcha:"),
+    `snippet should carry assistant content, got: ${hit.snippet}`,
+  );
+  assert.ok(hit.assistantSnippet, "assistantSnippet should be non-empty");
+  assert.ok(hit.assistantSnippet.startsWith("This is a known gotcha:"), `assistantSnippet should start with content, got: ${hit.assistantSnippet}`);
+  assert.ok(hit.userSnippet, "userSnippet should also be set");
+});
+
+test("given two candidate exchanges in the same session, substantive ranks above filler after specificity rerank", async () => {
+  const sessionId = "dddddddd-0000-7000-8000-000000000004";
+  const sourcePath = "/tmp/fake-session-d.jsonl";
+  
+  // Exchange A: Substantive
+  const exA: InsertableExchange = {
+    sessionId,
+    sourcePath,
+    title: "Test Spec Rerank",
+    cwd: "/tmp",
+    ordinal: 0,
+    timestamp: 1782379300,
+    userText: "spec-rerank-test-keyword: query about some complex design",
+    assistantText: "A very long assistant explanation that is definitely substantive and has at least four hundred characters to reach high specificity signal. Let's write more text here: we want to ensure the assistant's reply contains detailed instructions, architectural patterns, constraints, and other highly useful engineering insights that a developer would find valuable. This ensures combinedLen is large.",
+    toolNames: [],
+  };
+
+  // Exchange B: Filler
+  const exB: InsertableExchange = {
+    sessionId,
+    sourcePath,
+    title: "Test Spec Rerank",
+    cwd: "/tmp",
+    ordinal: 1,
+    timestamp: 1782379400, // Later timestamp, which is normally a tie-breaker or could rank higher
+    userText: "spec-rerank-test-keyword: tiny user request",
+    assistantText: "proceed",
+    toolNames: [],
+  };
+
+  runInTransaction(db, () => {
+    insertExchange(db, { ...exA, embedding: fakeEmbedding(100) });
+    insertExchange(db, { ...exB, embedding: fakeEmbedding(101) });
+  });
+
+  const hits = await search(db, { query: "spec-rerank-test-keyword", mode: "text" });
+  assert.ok(hits.length >= 2, "expected at least 2 hits");
+
+  // Find position of both hits
+  const idxA = hits.findIndex((h) => h.sessionId === sessionId && h.ordinal === 0);
+  const idxB = hits.findIndex((h) => h.sessionId === sessionId && h.ordinal === 1);
+
+  assert.ok(idxA !== -1, "should find Exchange A");
+  assert.ok(idxB !== -1, "should find Exchange B");
+  assert.ok(idxA < idxB, `Substantive Exchange A (rank ${idxA}) should rank above Filler Exchange B (rank ${idxB})`);
+});

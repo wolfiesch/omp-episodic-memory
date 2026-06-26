@@ -48,6 +48,8 @@ export interface SearchHit {
   timestamp: number;
   /** Short snippet (truncated userText) for display. */
   snippet: string;
+  userSnippet?: string;
+  assistantSnippet?: string;
   /** Fused relevance score (higher = better). */
   score: number;
   /** Per-signal debug scores. */

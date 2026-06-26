@@ -30,7 +30,7 @@ export interface ScaffoldRow extends ExtractLabel {
  * extractor order. Deterministic.
  */
 export function scaffoldLabels(opts: ScaffoldOptions): ScaffoldRow[] {
-  const exchanges = findSessionFiles(opts.sessionsDir).flatMap(parseSessionFile);
+  const exchanges = findSessionFiles(opts.sessionsDir).flatMap((f) => parseSessionFile(f));
   const candidates = extractWithExplanations(exchanges);
 
   const rows: ScaffoldRow[] = candidates.map((candidate) => {

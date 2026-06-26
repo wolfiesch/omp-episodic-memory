@@ -110,6 +110,7 @@ function formatHits(hits: SearchHit[], query: string): string {
     ]
       .filter(Boolean)
       .join(",");
+    // h.snippet is the combined user/assistant labeled snippet
     lines.push(
       `${i + 1}. [${proj}, ${date}] score=${h.score.toFixed(4)} (${signals})`,
       `   "${h.snippet}"`,

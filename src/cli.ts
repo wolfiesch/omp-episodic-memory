@@ -64,12 +64,20 @@ async function cmdIndex(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const sessionsDir = flags.get("sessions");
   const maxFiles = flags.has("max") ? Number(flags.get("max")) : undefined;
+  // --no-max-bytes lifts the cap entirely (dogfood huge sessions); --max-bytes N overrides it.
+  const maxBytes =
+    flags.get("no-max-bytes") === "true"
+      ? Number.MAX_SAFE_INTEGER
+      : flags.has("max-bytes")
+        ? Number(flags.get("max-bytes"))
+        : undefined;
   process.stderr.write(`Indexing into ${dbPath}...\n`);
   const start = Date.now();
   const result = await indexAll({
     dbPath,
     sessionsDir,
     maxFiles,
+    maxBytes,
     force: flags.get("force") === "true",
     onProgress: (p) => {
       if (p.fileIndex % 25 === 0 || p.fileIndex === p.totalFiles - 1) {
@@ -81,7 +89,7 @@ async function cmdIndex(flags: Map<string, string>): Promise<void> {
   });
   const secs = ((Date.now() - start) / 1000).toFixed(1);
   process.stderr.write(
-    `Done in ${secs}s: ${result.filesProcessed} files, ${result.exchangesUpserted} exchanges upserted, ${result.filesSkipped} skipped.\n`,
+    `Done in ${secs}s: ${result.filesProcessed} files, ${result.exchangesUpserted} exchanges upserted, ${result.filesSkipped} skipped, ${result.filesSkippedOversize} oversize-skipped.\n`,
   );
 }
 
@@ -149,6 +157,7 @@ async function cmdSearch(positional: string[], flags: Map<string, string>): Prom
       h.vectorRank ? `vec#${h.vectorRank}` : null,
       h.textRank ? `kw#${h.textRank}` : null,
     ].filter(Boolean).join(",");
+    // h.snippet is the combined user/assistant labeled snippet
     process.stdout.write(
       `${i + 1}. [${proj}, ${date}] score=${h.score.toFixed(4)} (${signals})\n` +
         `   "${h.snippet}"\n` +
@@ -608,7 +617,7 @@ async function main(): Promise<void> {
       process.stderr.write(
         "omp-episodic <command>\n\n" +
           "Commands:\n" +
-          "  index    [--db PATH] [--sessions DIR] [--max N] [--force]   Index OMP transcripts\n" +
+          "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
           "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--include a,b,c] [--json]\n" +

@@ -17,6 +17,7 @@ interface ExchangeRow {
   ordinal: number;
   timestamp: number;
   user_text: string;
+  assistant_text: string;
 }
 
 /**
@@ -112,7 +113,7 @@ export async function search(
   );
 
   const selectRow = db.prepare(
-    `SELECT id, session_id, source_path, title, cwd, ordinal, timestamp, user_text
+    `SELECT id, session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text
      FROM exchanges WHERE id = ?`,
   );
 
@@ -123,6 +124,22 @@ export async function search(
     if (opts.after !== undefined && row.timestamp < opts.after) continue;
     if (opts.before !== undefined && row.timestamp > opts.before) continue;
 
+    const userPart = row.user_text.replace(/\s+/g, " ").trim();
+    const asstPart = row.assistant_text.replace(/\s+/g, " ").trim();
+
+    // Combined labeled excerpt: keep user intent AND assistant evidence visible.
+    // Assistant gets the larger share since that's where substance lives.
+    const parts: string[] = [];
+    if (userPart) parts.push("U: " + userPart.slice(0, 100));
+    if (asstPart) parts.push("A: " + asstPart.slice(0, 200));
+    const snippet = parts.length > 0 ? parts.join(" | ") : "";
+
+    const rawScore = fusedScore.get(id) ?? 0;
+    const combinedLen = userPart.length + asstPart.length;
+    const signal = Math.min(1, combinedLen / 400);
+    const factor = 0.3 + 0.7 * signal;
+    const finalScore = rawScore * factor;
+
     hits.push({
       sessionId: row.session_id,
       sourcePath: row.source_path,
@@ -130,8 +147,10 @@ export async function search(
       cwd: row.cwd,
       ordinal: row.ordinal,
       timestamp: row.timestamp,
-      snippet: row.user_text.replace(/\s+/g, " ").trim().slice(0, 200),
-      score: fusedScore.get(id) ?? 0,
+      snippet,
+      userSnippet: userPart.slice(0, 200),
+      assistantSnippet: asstPart.slice(0, 200),
+      score: finalScore,
       vectorRank: vectorRanks.get(id) ?? null,
       textRank: textRanks.get(id) ?? null,
     });
