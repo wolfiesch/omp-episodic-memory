@@ -14,6 +14,7 @@ import { findSessionFiles } from "./indexer.js";
 import { listMemoryRecords, updateMemoryStatus } from "./memory.js";
 import { parseSessionFile } from "./parser.js";
 import { recallForTask, type RecallBundle } from "./recall.js";
+import { supersedeDecisions } from "./supersede.js";
 import { EMBEDDING_DIM, type SearchMode } from "./types.js";
 
 /** Categories mirror the recall intents the harness exercises. */
@@ -176,6 +177,7 @@ export async function runEval(opts: EvalOptions): Promise<EvalReport> {
       for (const rec of listMemoryRecords(db, "pending", Number.MAX_SAFE_INTEGER)) {
         updateMemoryStatus(db, rec.id, "approved");
       }
+      supersedeDecisions(db);
     }
 
     const questions = parseEvalQuestions(readFileSync(opts.questionsPath, "utf8"));

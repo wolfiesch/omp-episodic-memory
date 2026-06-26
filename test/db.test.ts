@@ -153,17 +153,17 @@ test("insertExchange is idempotent and updates in place on change", () => {
   assert.match(row.user_text, /EXTRA_MARKER_TOKEN/);
 });
 
-test("inserting all 8 fixture exchanges yields 8 exchanges / 4 sessions", () => {
+test("inserting all fixture exchanges yields matching exchange and session stats", () => {
   const exchanges = allFixtureExchanges();
-  assert.equal(exchanges.length, 8);
+  const sessionCount = new Set(exchanges.map((ex) => ex.sessionId)).size;
 
   runInTransaction(db, () => {
     exchanges.forEach((ex, i) => insertExchange(db, toInsertable(ex, i)));
   });
 
   const stats = getStats(db);
-  assert.equal(stats.exchanges, 8);
-  assert.equal(stats.sessions, 4);
+  assert.equal(stats.exchanges, exchanges.length);
+  assert.equal(stats.sessions, sessionCount);
 
   const timestamps = exchanges.map((e) => e.timestamp);
   assert.equal(stats.earliest, Math.min(...timestamps));

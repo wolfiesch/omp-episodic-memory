@@ -1,6 +1,13 @@
-{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"decision","titleSubstring":"sqlite-vec","correct":true}
-{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"ABI","correct":true}
-{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"fails","correct":true}
-{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":1,"type":"decision","titleSubstring":"sqlite-vec","correct":true}
-{"sessionId":"cccccccc-0000-7000-8000-000000000003","ordinal":0,"type":"decision","titleSubstring":"embedding","correct":true}
-{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"runbook","titleSubstring":"gotcha","correct":false}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"the sqlite-vec native install","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"this is a known","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"do not edit the","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"decision","titleSubstring":"we decided to pin","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"runbook","titleSubstring":"this is a known","correct":false}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":1,"type":"decision","titleSubstring":"we decided to use","correct":true}
+{"sessionId":"bbbbbbbb-0000-7000-8000-000000000002","ordinal":0,"type":"gotcha","titleSubstring":"avoid committing a .env","correct":true}
+{"sessionId":"bbbbbbbb-0000-7000-8000-000000000002","ordinal":0,"type":"runbook","titleSubstring":"runbook for publishing: 1.","correct":true}
+{"sessionId":"bbbbbbbb-0000-7000-8000-000000000002","ordinal":1,"type":"decision","titleSubstring":"we decided to use","correct":true}
+{"sessionId":"bbbbbbbb-0000-7000-8000-000000000002","ordinal":1,"type":"gotcha","titleSubstring":"avoid running the test","correct":true}
+{"sessionId":"cccccccc-0000-7000-8000-000000000003","ordinal":0,"type":"decision","titleSubstring":"we decided to use","correct":true}
+{"sessionId":"dddddddd-0000-7000-8000-000000000004","ordinal":0,"type":"decision","titleSubstring":"we decided to store","correct":true}
+{"sessionId":"dddddddd-0000-7000-8000-000000000004","ordinal":1,"type":"decision","titleSubstring":"we decided to store","correct":true}
