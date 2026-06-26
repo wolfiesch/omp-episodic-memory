@@ -55,6 +55,13 @@ test("xmlEscape correctness", () => {
   assert.equal(xmlEscape(`& < > " '`), "&amp; &lt; &gt; &quot; &apos;");
 });
 
+test("defaultDaemonConfig honors a cliPath override", () => {
+  const cfg = defaultDaemonConfig({ cliPath: "/usr/local/bin/omp-episodic" });
+  assert.equal(cfg.cliPath, "/usr/local/bin/omp-episodic");
+  const unit = renderSystemdUnit(cfg);
+  assert.match(unit, /\/usr\/local\/bin\/omp-episodic/);
+});
+
 test("systemd ExecStart with a space-containing dbPath is quoted", () => {
   const cfg = defaultDaemonConfig({ dbPath: "/Users/a b/index.db", sessionsDir: "/s p/sessions" });
   const unit = renderSystemdUnit(cfg);

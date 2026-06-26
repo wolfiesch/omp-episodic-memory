@@ -119,6 +119,10 @@ omp-episodic daemon status     # show platform + whether the service file exists
 omp-episodic daemon uninstall  # remove the service file
 ```
 
+Install the CLI globally (`npm install -g omp-episodic-memory`) before running `daemon install` so the
+service points at a stable path. If you run it from a temporary `npx` location, pass `--cli-path PATH`
+to pin the daemon to a CLI that will not be cleaned up.
+
 ## How it works
 
 | Stage | What happens |

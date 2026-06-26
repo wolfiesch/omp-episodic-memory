@@ -673,12 +673,22 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
       overrides.intervalSec = parsed;
     }
   }
+  const cliPath = flags.get("cli-path");
+  if (cliPath !== undefined) {
+    overrides.cliPath = cliPath;
+  }
 
   const config = defaultDaemonConfig(overrides);
 
   if (sub === "install") {
     try {
       const res = installDaemon(config);
+      if (/[\\/](?:_npx|\.npm[\\/]_npx|npm-cache)[\\/]/.test(config.cliPath)) {
+        process.stderr.write(
+          "Warning: the service points at a temporary npx/cache path that may be cleaned up.\n" +
+            "  Install globally (npm install -g omp-episodic-memory) or pass --cli-path PATH to a stable CLI location.\n",
+        );
+      }
       if (isJson) {
         process.stdout.write(JSON.stringify(res) + "\n");
       } else {
@@ -803,7 +813,7 @@ async function main(): Promise<void> {
           "Commands:\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
           "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
-          "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--json]   Manage the background indexing service\n" +
+          "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--cli-path PATH] [--json]   Manage the background indexing service\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--ui] [--plain] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--ui] [--plain] [--json]\n" +
           "  stats    [--db PATH] [--ui] [--plain]              Show index statistics\n" +
