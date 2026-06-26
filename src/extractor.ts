@@ -41,8 +41,20 @@ function countSteps(text: string): number {
  * (sessionId + ordinal + sourcePath) and the exchange's cwd as its project.
  * A single exchange may yield multiple records (e.g. a decision AND a gotcha).
  */
-export function extractFromExchanges(exchanges: Exchange[]): NewMemoryRecord[] {
-  const out: NewMemoryRecord[] = [];
+export interface ExtractCandidate {
+  record: NewMemoryRecord;
+  rule: string;
+  matchedText: string;
+  dedupeKey: string;
+}
+
+/**
+ * Pure, auditable core: like extractFromExchanges but each produced record is
+ * paired with the rule that fired, the exact text that triggered it, and the
+ * dedupeKey memory.ts would use. No DB, no network, deterministic ordering.
+ */
+export function extractWithExplanations(exchanges: Exchange[]): ExtractCandidate[] {
+  const out: ExtractCandidate[] = [];
   for (const ex of exchanges) {
     const source = {
       sessionId: ex.sessionId,
@@ -57,20 +69,27 @@ export function extractFromExchanges(exchanges: Exchange[]): NewMemoryRecord[] {
       title: string,
       body: string,
       confidence: number,
+      rule: string,
+      matchedText: string,
     ): void => {
       if (title.length === 0 || body.length === 0) return;
       const key = `${type}\u0000${title}`;
       if (seen.has(key)) return;
       seen.add(key);
       out.push({
-        type,
-        title,
-        body,
-        project,
-        confidence,
-        status: "pending",
-        sources: [source],
-        validFrom: ex.timestamp,
+        record: {
+          type,
+          title,
+          body,
+          project,
+          confidence,
+          status: "pending",
+          sources: [source],
+          validFrom: ex.timestamp,
+        },
+        rule,
+        matchedText,
+        dedupeKey: `${type}\u0000${title}\u0000${project ?? ""}`,
       });
     };
 
@@ -78,9 +97,9 @@ export function extractFromExchanges(exchanges: Exchange[]): NewMemoryRecord[] {
     for (const text of [ex.userText, ex.assistantText]) {
       for (const sentence of splitSentences(text)) {
         if (DECISION_RE.test(sentence)) {
-          add("decision", titleFrom(sentence), sentence, 0.7);
+          add("decision", titleFrom(sentence), sentence, 0.7, "decision", sentence);
         } else if (GOTCHA_RE.test(sentence)) {
-          add("gotcha", titleFrom(sentence), sentence, 0.6);
+          add("gotcha", titleFrom(sentence), sentence, 0.6, "gotcha", sentence);
         }
       }
     }
@@ -89,10 +108,14 @@ export function extractFromExchanges(exchanges: Exchange[]): NewMemoryRecord[] {
     if (countSteps(ex.assistantText) >= 2) {
       const firstSentence = splitSentences(ex.assistantText)[0] ?? ex.assistantText;
       const title = titleFrom(firstSentence);
-      add("runbook", title, ex.assistantText.trim(), 0.65);
+      add("runbook", title, ex.assistantText.trim(), 0.65, "runbook", firstSentence);
     }
   }
   return out;
+}
+
+export function extractFromExchanges(exchanges: Exchange[]): NewMemoryRecord[] {
+  return extractWithExplanations(exchanges).map((c) => c.record);
 }
 
 export interface ExtractOptions {

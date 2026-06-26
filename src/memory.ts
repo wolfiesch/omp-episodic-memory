@@ -58,6 +58,10 @@ export interface MemoryRecord {
   /** Heuristic/model confidence in [0,1]. */
   confidence: number;
   status: MemoryStatus;
+  /** Reviewer-supplied reason a record was rejected/approved, else null. */
+  reviewReason: string | null;
+  /** Unix SECONDS the record was reviewed (status set), else null. */
+  reviewedAt: number | null;
   /** >=1 provenance pointer. */
   sources: MemorySource[];
   createdAt: number;
@@ -109,6 +113,8 @@ export function initMemorySchema(db: Database.Database): void {
       valid_to INTEGER,
       confidence REAL NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'pending',
+      review_reason TEXT,
+      reviewed_at INTEGER,
       dedupe_key TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
@@ -137,6 +143,27 @@ export function initMemorySchema(db: Database.Database): void {
       content_rowid='id'
     );
   `);
+
+  // Idempotent migration: existing DBs already have memory_records (CREATE IF
+  // NOT EXISTS is a no-op), so add the review columns when absent.
+  const cols = db.prepare(`PRAGMA table_info(memory_records)`).all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("review_reason")) {
+    try {
+      db.exec(`ALTER TABLE memory_records ADD COLUMN review_reason TEXT`);
+    } catch {
+      // Column may have been added concurrently; ignore.
+    }
+  }
+  if (!names.has("reviewed_at")) {
+    try {
+      db.exec(`ALTER TABLE memory_records ADD COLUMN reviewed_at INTEGER`);
+    } catch {
+      // Column may have been added concurrently; ignore.
+    }
+  }
 }
 
 interface MemoryRow {
@@ -150,6 +177,8 @@ interface MemoryRow {
   valid_to: number | null;
   confidence: number;
   status: string;
+  review_reason: string | null;
+  reviewed_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -172,6 +201,8 @@ function hydrate(db: Database.Database, row: MemoryRow): MemoryRecord {
     validTo: row.valid_to,
     confidence: row.confidence,
     status: row.status as MemoryStatus,
+    reviewReason: row.review_reason ?? null,
+    reviewedAt: row.reviewed_at ?? null,
     sources: sources.map((s) => ({
       sessionId: s.session_id,
       ordinal: s.ordinal,
@@ -285,11 +316,14 @@ export function updateMemoryStatus(
   db: Database.Database,
   id: number,
   status: MemoryStatus,
+  opts: { reason?: string } = {},
 ): boolean {
   const now = Math.floor(Date.now() / 1000);
   const info = db
-    .prepare(`UPDATE memory_records SET status = ?, updated_at = ? WHERE id = ?`)
-    .run(status, now, id);
+    .prepare(
+      `UPDATE memory_records SET status = ?, review_reason = ?, reviewed_at = ?, updated_at = ? WHERE id = ?`,
+    )
+    .run(status, opts.reason ?? null, now, now, id);
   return info.changes > 0;
 }
 

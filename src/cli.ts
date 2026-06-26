@@ -2,8 +2,10 @@
 // CLI for omp-episodic-memory: index / search / stats over OMP transcripts.
 // stdout = results only; all status/progress goes to stderr.
 import { openDb, openReadOnlyDb, getStats } from "./db.js";
-import { indexAll } from "./indexer.js";
-import { extract } from "./extractor.js";
+import { indexAll, watchIndex } from "./indexer.js";
+import { extract, extractWithExplanations } from "./extractor.js";
+import { parseSessionFile } from "./parser.js";
+import { findSessionFiles } from "./indexer.js";
 import { search } from "./search.js";
 import {
   listMemoryRecords,
@@ -80,6 +82,34 @@ async function cmdIndex(flags: Map<string, string>): Promise<void> {
   );
 }
 
+async function cmdWatch(flags: Map<string, string>): Promise<void> {
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const intervalMs = flags.has("interval") ? Number(flags.get("interval")) * 1000 : undefined;
+  const stableMs = flags.has("stable") ? Number(flags.get("stable")) * 1000 : undefined;
+  process.stderr.write(`Watching sessions; re-indexing into ${dbPath} (Ctrl-C to stop)...\n`);
+  const { stop } = await watchIndex({
+    dbPath,
+    sessionsDir: flags.get("sessions"),
+    intervalMs,
+    stableMs,
+    onCycle: (r) => {
+      if (r.filesProcessed > 0) {
+        const at = new Date(r.at).toISOString().slice(11, 19);
+        process.stderr.write(
+          `  [${at}] ${r.filesProcessed} file(s), ${r.exchangesUpserted} exchange(s) upserted, ${r.filesSkipped} skipped.\n`,
+        );
+      }
+    },
+  });
+  const shutdown = (): void => {
+    stop();
+    process.stderr.write("\nStopped.\n");
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+  await new Promise<void>(() => {});
+}
 async function cmdSearch(positional: string[], flags: Map<string, string>): Promise<void> {
   const query = positional.join(" ").trim();
   if (!query) {
@@ -174,6 +204,36 @@ async function cmdExtract(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const since = toEpochSeconds(flags.get("since"));
   const limit = flags.has("max") ? Number(flags.get("max")) : undefined;
+
+  if (flags.get("dry-run") === "true") {
+    const project = flags.get("project");
+    let files = findSessionFiles(flags.get("sessions"));
+    if (limit !== undefined) files = files.slice(0, limit);
+    const candidates = [];
+    for (const file of files) {
+      let exchanges = parseSessionFile(file);
+      if (since !== undefined) exchanges = exchanges.filter((e) => e.timestamp >= since);
+      if (project !== undefined) exchanges = exchanges.filter((e) => e.cwd === project);
+      candidates.push(...extractWithExplanations(exchanges));
+    }
+    if (flags.get("json") === "true") {
+      process.stdout.write(`${JSON.stringify(candidates, null, 2)}\n`);
+      return;
+    }
+    if (candidates.length === 0) {
+      process.stdout.write("No candidates (dry run).\n");
+      return;
+    }
+    for (const c of candidates) {
+      const matched = c.matchedText.replace(/\s+/g, " ").trim().slice(0, 100);
+      process.stdout.write(
+        `(${c.record.type}, ${c.record.confidence.toFixed(2)}) ${c.record.title} — ${c.record.project ?? "no-project"}\n` +
+          `    rule=${c.rule}  match="${matched}"\n`,
+      );
+    }
+    process.stdout.write(`\n${candidates.length} candidate(s) — dry run, nothing written.\n`);
+    return;
+  }
   process.stderr.write(`Extracting derived memories into ${dbPath}...\n`);
   const result = await extract({
     dbPath,
@@ -230,10 +290,11 @@ function cmdReject(positional: string[], flags: Map<string, string>): void {
     return;
   }
   const db = openDb(flags.get("db") ?? DEFAULT_DB_PATH);
-  const ok = updateMemoryStatus(db, id, "rejected");
-  db.close();
   const reason = flags.get("reason");
-  const suffix = reason && reason !== "true" ? ` (${reason})` : "";
+  const cleanReason = reason && reason !== "true" ? reason : undefined;
+  const ok = updateMemoryStatus(db, id, "rejected", { reason: cleanReason });
+  db.close();
+  const suffix = cleanReason ? ` (${cleanReason})` : "";
   process.stdout.write(ok ? `Rejected [${id}].${suffix}\n` : `Record [${id}] not found.\n`);
 }
 
@@ -448,6 +509,9 @@ async function main(): Promise<void> {
     case "index":
       await cmdIndex(flags);
       break;
+    case "watch":
+      await cmdWatch(flags);
+      break;
     case "search":
       await cmdSearch(positional, flags);
       break;
@@ -492,10 +556,11 @@ async function main(): Promise<void> {
         "omp-episodic <command>\n\n" +
           "Commands:\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force]   Index OMP transcripts\n" +
+          "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--include a,b,c] [--json]\n" +
           "  stats    [--db PATH]                              Show index statistics\n" +
-          "  extract  [--db PATH] [--sessions DIR] [--since YYYY-MM-DD] [--project P] [--max N]\n" +
+          "  extract  [--db PATH] [--sessions DIR] [--since YYYY-MM-DD] [--project P] [--max N] [--dry-run] [--json]\n" +
           "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--json]\n" +
           "  approve  <id> [--db PATH]                         Approve a derived memory\n" +
           "  reject   <id> [--db PATH] [--reason TEXT]         Reject a derived memory\n" +

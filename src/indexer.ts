@@ -51,6 +51,11 @@ export interface IndexOptions {
   sessionsDir?: string;
   maxFiles?: number;
   force?: boolean;
+  /**
+   * When set, skip files whose mtime changed less than this many ms ago
+   * (still likely being written). Used by watch mode; default unset = index all.
+   */
+  minStableMs?: number;
   onProgress?: (p: IndexProgress) => void;
 }
 
@@ -100,6 +105,10 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       `INSERT INTO indexed_files (path, mtime_ms, indexed_at) VALUES (?,?,?)
        ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, indexed_at=excluded.indexed_at`,
     );
+    const selectContent = db.prepare(
+      `SELECT source_path, title, cwd, timestamp, user_text, assistant_text, tool_names
+       FROM exchanges WHERE session_id=? AND ordinal=?`,
+    );
 
     let filesProcessed = 0;
     let filesSkipped = 0;
@@ -109,6 +118,15 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       const file = files[fileIndex];
 
       const mtimeMs = statSync(file).mtimeMs;
+      if (
+        opts.minStableMs !== undefined &&
+        !isStable(mtimeMs, Date.now(), opts.minStableMs)
+      ) {
+        // File was modified very recently; likely still being written. Skip
+        // this round and pick it up on the next cycle once it settles.
+        filesSkipped++;
+        continue;
+      }
       const storedRow = selectMtime.get(file) as IndexedFileRow | undefined;
       if (!shouldIndexFile(storedRow?.mtime_ms, mtimeMs, opts.force)) {
         filesSkipped++;
@@ -118,8 +136,35 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       const exchanges = parseSessionFile(file);
 
       // Compute embeddings first (async); better-sqlite3 transactions cannot span await.
+      // Embedding is the costly step, so skip exchanges whose stored row already
+      // matches the parsed values (mirror insertExchange's unchanged comparison).
       const insertables: InsertableExchange[] = [];
       for (const ex of exchanges) {
+        const toolNamesJson = JSON.stringify(ex.toolNames);
+        const existing = selectContent.get(ex.sessionId, ex.ordinal) as
+          | {
+              source_path: string;
+              title: string | null;
+              cwd: string | null;
+              timestamp: number;
+              user_text: string;
+              assistant_text: string | null;
+              tool_names: string | null;
+            }
+          | undefined;
+        if (
+          existing !== undefined &&
+          existing.source_path === ex.sourcePath &&
+          existing.title === ex.title &&
+          existing.cwd === ex.cwd &&
+          existing.timestamp === ex.timestamp &&
+          existing.user_text === ex.userText &&
+          (existing.assistant_text ?? "") === ex.assistantText &&
+          (existing.tool_names ?? "[]") === toolNamesJson
+        ) {
+          continue;
+        }
+
         const embedding = await embedExchange(
           ex.userText,
           ex.assistantText,
@@ -153,4 +198,83 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
   } finally {
     db.close();
   }
+}
+
+/**
+ * Returns true when a file's mtime is old enough to be considered settled.
+ * Pure helper: a file whose mtime changed less than `stableMs` ago is treated
+ * as still being written and should be skipped this round.
+ */
+export function isStable(
+  mtimeMs: number,
+  now: number,
+  stableMs: number,
+): boolean {
+  return now - mtimeMs >= stableMs;
+}
+
+export interface WatchOptions extends IndexOptions {
+  /** Polling interval between re-index cycles, in ms. Default 5000. */
+  intervalMs?: number;
+  /**
+   * A file whose mtime changed less than this many ms ago is considered
+   * still-being-written and skipped this round. Default 2000.
+   */
+  stableMs?: number;
+  /** Invoked after each cycle with the result and the wall-clock time. */
+  onCycle?: (r: IndexResult & { at: number }) => void;
+}
+
+/**
+ * Keep the index fresh during active OMP work via periodic background
+ * re-indexing. Reuses the incremental `indexAll` (which skips unchanged files
+ * by mtime). Polling-based — no fragile fs.watch dependency.
+ *
+ * Each cycle runs the incremental `indexAll` with `minStableMs` set from
+ * `stableMs` (default 2000), so files modified within that window are treated
+ * as still being written and deferred to a later cycle.
+ */
+export async function watchIndex(
+  opts: WatchOptions = {},
+): Promise<{ stop: () => void }> {
+  const intervalMs = opts.intervalMs ?? 5000;
+  const minStableMs = opts.stableMs ?? 2000;
+
+  let stopped = false;
+  let inFlight = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const runCycle = async (): Promise<void> => {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    try {
+      const result = await indexAll({ ...opts, minStableMs });
+      opts.onCycle?.({ ...result, at: Date.now() });
+    } catch (err) {
+      process.stderr.write(`watchIndex: cycle failed: ${String(err)}\n`);
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  const schedule = (): void => {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      void runCycle().finally(schedule);
+    }, intervalMs);
+  };
+
+  const stop = (): void => {
+    stopped = true;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  // Initial cycle immediately, then chain polling cycles.
+  await runCycle();
+  schedule();
+
+  return { stop };
 }
