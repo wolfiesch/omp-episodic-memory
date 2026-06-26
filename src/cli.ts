@@ -32,6 +32,7 @@ import {
   type BlockKind,
 } from "./blocks.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
+import { formatToolEventSummary } from "./tool-events.js";
 
 function parseFlags(args: string[]): { positional: string[]; flags: Map<string, string> } {
   const positional: string[] = [];
@@ -58,6 +59,13 @@ function toEpochSeconds(dateStr: string | undefined): number | undefined {
   if (!dateStr) return undefined;
   const ms = Date.parse(dateStr);
   return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000);
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`Expected true or false, got: ${value}`);
 }
 
 async function cmdIndex(flags: Map<string, string>): Promise<void> {
@@ -124,7 +132,7 @@ async function cmdWatch(flags: Map<string, string>): Promise<void> {
 async function cmdSearch(positional: string[], flags: Map<string, string>): Promise<void> {
   const query = positional.join(" ").trim();
   if (!query) {
-    process.stderr.write("Usage: omp-episodic search <query> [--mode both|vector|text] [--limit N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--db PATH]\n");
+    process.stderr.write("Usage: omp-episodic search <query> [--mode both|vector|text] [--limit N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--tool NAME] [--tool-error true|false] [--db PATH]\n");
     process.exitCode = 1;
     return;
   }
@@ -138,6 +146,8 @@ async function cmdSearch(positional: string[], flags: Map<string, string>): Prom
     limit,
     after: toEpochSeconds(flags.get("after")),
     before: toEpochSeconds(flags.get("before")),
+    toolName: flags.get("tool"),
+    toolError: parseOptionalBoolean(flags.get("tool-error")),
   });
   db.close();
 
@@ -158,9 +168,14 @@ async function cmdSearch(positional: string[], flags: Map<string, string>): Prom
       h.textRank ? `kw#${h.textRank}` : null,
     ].filter(Boolean).join(",");
     // h.snippet is the combined user/assistant labeled snippet
+    const toolsLine =
+      h.toolEvents.length > 0
+        ? `   Tools: ${h.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 120)).join("; ")}\n`
+        : "";
     process.stdout.write(
       `${i + 1}. [${proj}, ${date}] score=${h.score.toFixed(4)} (${signals})\n` +
         `   "${h.snippet}"\n` +
+        toolsLine +
         `   ${h.sourcePath} (exchange ${h.ordinal})\n\n`,
     );
   });
@@ -169,7 +184,7 @@ async function cmdSearch(positional: string[], flags: Map<string, string>): Prom
 async function cmdRecall(positional: string[], flags: Map<string, string>): Promise<void> {
   const task = positional.join(" ").trim();
   if (!task) {
-    process.stderr.write("Usage: omp-episodic recall <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--include a,b,c] [--json]\n");
+    process.stderr.write("Usage: omp-episodic recall <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after YYYY-MM-DD] [--before YYYY-MM-DD] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--json]\n");
     process.exitCode = 1;
     return;
   }
@@ -188,6 +203,8 @@ async function cmdRecall(positional: string[], flags: Map<string, string>): Prom
     maxContextTokens: flags.has("tokens") ? Number(flags.get("tokens")) : undefined,
     after: toEpochSeconds(flags.get("after")),
     before: toEpochSeconds(flags.get("before")),
+    toolName: flags.get("tool"),
+    toolError: parseOptionalBoolean(flags.get("tool-error")),
   });
   db.close();
 
@@ -619,8 +636,8 @@ async function main(): Promise<void> {
           "Commands:\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
           "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
-          "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--json]\n" +
-          "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--include a,b,c] [--json]\n" +
+          "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--json]\n" +
+          "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--json]\n" +
           "  stats    [--db PATH]                              Show index statistics\n" +
           "  extract  [--db PATH] [--sessions DIR] [--since YYYY-MM-DD] [--project P] [--max N] [--dry-run] [--json]\n" +
           "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--json]\n" +

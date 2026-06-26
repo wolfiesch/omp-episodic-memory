@@ -186,6 +186,74 @@ test("query matching long assistant reply yields combined U+A snippet with non-e
   assert.ok(hit.userSnippet, "userSnippet should also be set");
 });
 
+test("text search matches tool result output", async () => {
+  const hits = await search(db, { query: "ABI_MISMATCH_SENTINEL", mode: "text" });
+  const hit = hits.find((h) => h.sessionId.startsWith("aaaaaaaa") && h.ordinal === 0);
+  assert.ok(hit, "expected first aaaaaaaa exchange");
+  assert.ok(hit.toolEvents.length >= 2);
+  assert.ok(hit.snippet.includes("T: bash"), `snippet should include tool summary, got: ${hit.snippet}`);
+});
+
+test("tool filters narrow search hits", async () => {
+  const bashHits = await search(db, { query: "ABI_MISMATCH_SENTINEL", mode: "text", toolName: "bash" });
+  assert.ok(bashHits.some((h) => h.sessionId.startsWith("aaaaaaaa") && h.ordinal === 0));
+  const readHits = await search(db, { query: "src/db.ts", mode: "text", toolName: "read" });
+  assert.ok(readHits.some((h) => h.sessionId.startsWith("aaaaaaaa") && h.ordinal === 0));
+  assert.deepEqual(await search(db, { query: "ABI_MISMATCH_SENTINEL", mode: "text", toolName: "write" }), []);
+  const errorHits = await search(db, { query: "ABI_MISMATCH_SENTINEL", mode: "text", toolError: true });
+  assert.ok(errorHits.some((h) => h.sessionId.startsWith("aaaaaaaa") && h.ordinal === 0));
+  const successHits = await search(db, { query: "ABI_MISMATCH_SENTINEL", mode: "text", toolError: false });
+  assert.ok(successHits.some((h) => h.sessionId.startsWith("aaaaaaaa") && h.ordinal === 0));
+});
+
+test("tool filters overfetch beyond the unfiltered candidate window", async () => {
+  const sessionId = "tool-window-0000-7000-8000-000000000005";
+  runInTransaction(db, () => {
+    for (let i = 0; i < 75; i++) {
+      insertExchange(db, {
+        sessionId,
+        sourcePath: "/tmp/tool-window.jsonl",
+        title: "Tool window",
+        cwd: "/tmp",
+        ordinal: i,
+        timestamp: 1_782_000_000 + i,
+        userText: `tool-window-keyword filler ${i}`,
+        assistantText: "filler",
+        toolNames: [],
+        toolEvents: [],
+        embedding: fakeEmbedding(200 + i),
+      });
+    }
+    insertExchange(db, {
+      sessionId,
+      sourcePath: "/tmp/tool-window.jsonl",
+      title: "Tool window",
+      cwd: "/tmp",
+      ordinal: 75,
+      timestamp: 1_782_000_075,
+      userText: "tool-window-keyword target",
+      assistantText: "target",
+      toolNames: ["read"],
+      toolEvents: [{
+        callId: "window-read",
+        toolName: "read",
+        arguments: { path: "src/search.ts" },
+        resultText: "target",
+        isError: false,
+        details: null,
+        exitCode: null,
+        filePaths: ["src/search.ts"],
+        command: null,
+      }],
+      embedding: fakeEmbedding(300),
+    });
+  });
+
+  const hits = await search(db, { query: "tool-window-keyword", mode: "text", toolName: "read", limit: 1 });
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].ordinal, 75);
+});
+
 test("given two candidate exchanges in the same session, substantive ranks above filler after specificity rerank", async () => {
   const sessionId = "dddddddd-0000-7000-8000-000000000004";
   const sourcePath = "/tmp/fake-session-d.jsonl";
@@ -201,6 +269,7 @@ test("given two candidate exchanges in the same session, substantive ranks above
     userText: "spec-rerank-test-keyword: query about some complex design",
     assistantText: "A very long assistant explanation that is definitely substantive and has at least four hundred characters to reach high specificity signal. Let's write more text here: we want to ensure the assistant's reply contains detailed instructions, architectural patterns, constraints, and other highly useful engineering insights that a developer would find valuable. This ensures combinedLen is large.",
     toolNames: [],
+    toolEvents: [],
   };
 
   // Exchange B: Filler
@@ -214,6 +283,7 @@ test("given two candidate exchanges in the same session, substantive ranks above
     userText: "spec-rerank-test-keyword: tiny user request",
     assistantText: "proceed",
     toolNames: [],
+    toolEvents: [],
   };
 
   runInTransaction(db, () => {

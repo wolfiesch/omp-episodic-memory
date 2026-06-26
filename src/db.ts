@@ -7,6 +7,7 @@ import { DEFAULT_DB_PATH, EMBEDDING_DIM, type Exchange } from "./types.js";
 import { initMemorySchema } from "./memory.js";
 import { initGraphSchema } from "./graph.js";
 import { initBlocksSchema } from "./blocks.js";
+import { serializeToolEvents, toolEventsIndexText } from "./tool-events.js";
 
 export function openDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -20,12 +21,65 @@ export function openDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
   return db;
 }
 
+const OUTDATED_SCHEMA_MESSAGE =
+  'Index DB schema is outdated. Run "omp-episodic index --force" once to migrate tool event columns.';
+
+function tableColumns(db: Database.Database, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+}
+
+function ensureExchangeColumns(db: Database.Database): void {
+  const columns = tableColumns(db, "exchanges");
+  if (!columns.includes("tool_events")) {
+    db.exec("ALTER TABLE exchanges ADD COLUMN tool_events TEXT");
+  }
+  if (!columns.includes("tool_event_text")) {
+    db.exec("ALTER TABLE exchanges ADD COLUMN tool_event_text TEXT");
+  }
+}
+
+function createExchangeFts(db: Database.Database): void {
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS exchanges_fts USING fts5(
+      user_text,
+      assistant_text,
+      tool_names,
+      tool_event_text,
+      content='exchanges',
+      content_rowid='id'
+    );
+  `);
+}
+
+function ensureExchangeFtsSchema(db: Database.Database): void {
+  createExchangeFts(db);
+  if (!tableColumns(db, "exchanges_fts").includes("tool_event_text")) {
+    db.exec("DROP TABLE IF EXISTS exchanges_fts");
+    createExchangeFts(db);
+    db.exec("INSERT INTO exchanges_fts(exchanges_fts) VALUES('rebuild')");
+  }
+}
+
+function assertReadSchemaCurrent(db: Database.Database): void {
+  const exchangeColumns = tableColumns(db, "exchanges");
+  const ftsColumns = tableColumns(db, "exchanges_fts");
+  if (
+    !exchangeColumns.includes("tool_events") ||
+    !exchangeColumns.includes("tool_event_text") ||
+    !ftsColumns.includes("tool_event_text")
+  ) {
+    db.close();
+    throw new Error(OUTDATED_SCHEMA_MESSAGE);
+  }
+}
+
 export function openReadOnlyDb(dbPath: string = DEFAULT_DB_PATH): Database.Database {
   if (!existsSync(dbPath)) {
     throw new Error(`Index DB not found: ${dbPath}. Run "omp-episodic index" first.`);
   }
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   sqliteVec.load(db);
+  assertReadSchemaCurrent(db);
   return db;
 }
 
@@ -42,6 +96,8 @@ export function initSchema(db: Database.Database): void {
       user_text TEXT NOT NULL,
       assistant_text TEXT,
       tool_names TEXT,
+      tool_events TEXT,
+      tool_event_text TEXT,
       UNIQUE(session_id, ordinal)
     );
 
@@ -51,6 +107,7 @@ export function initSchema(db: Database.Database): void {
       user_text,
       assistant_text,
       tool_names,
+      tool_event_text,
       content='exchanges',
       content_rowid='id'
     );
@@ -59,6 +116,8 @@ export function initSchema(db: Database.Database): void {
       embedding float[${EMBEDDING_DIM}]
     );
   `);
+  ensureExchangeColumns(db);
+  ensureExchangeFtsSchema(db);
 }
 
 export interface InsertableExchange extends Exchange {
@@ -67,9 +126,11 @@ export interface InsertableExchange extends Exchange {
 
 export function insertExchange(db: Database.Database, ex: InsertableExchange): boolean {
   const toolNamesJson = JSON.stringify(ex.toolNames);
+  const toolEventsJson = serializeToolEvents(ex.toolEvents);
+  const toolEventText = toolEventsIndexText(ex.toolEvents);
   const existing = db
     .prepare(
-      `SELECT id, source_path, title, cwd, timestamp, user_text, assistant_text, tool_names
+      `SELECT id, source_path, title, cwd, timestamp, user_text, assistant_text, tool_names, tool_events, tool_event_text
        FROM exchanges
        WHERE session_id = ? AND ordinal = ?`,
     )
@@ -83,6 +144,8 @@ export function insertExchange(db: Database.Database, ex: InsertableExchange): b
         user_text: string;
         assistant_text: string | null;
         tool_names: string | null;
+        tool_events: string | null;
+        tool_event_text: string | null;
       }
     | undefined;
 
@@ -95,14 +158,16 @@ export function insertExchange(db: Database.Database, ex: InsertableExchange): b
       existing.timestamp === ex.timestamp &&
       existing.user_text === ex.userText &&
       (existing.assistant_text ?? "") === ex.assistantText &&
-      (existing.tool_names ?? "[]") === toolNamesJson;
+      (existing.tool_names ?? "[]") === toolNamesJson &&
+      (existing.tool_events ?? "[]") === toolEventsJson &&
+      (existing.tool_event_text ?? "") === toolEventText;
     if (unchanged) return false;
 
     rowid = existing.id;
     db.prepare(
       `UPDATE exchanges
        SET source_path = ?, title = ?, cwd = ?, timestamp = ?,
-           user_text = ?, assistant_text = ?, tool_names = ?
+           user_text = ?, assistant_text = ?, tool_names = ?, tool_events = ?, tool_event_text = ?
        WHERE id = ?`,
     ).run(
       ex.sourcePath,
@@ -112,21 +177,23 @@ export function insertExchange(db: Database.Database, ex: InsertableExchange): b
       ex.userText,
       ex.assistantText,
       toolNamesJson,
+      toolEventsJson,
+      toolEventText,
       rowid,
     );
     // External-content FTS5 requires the special 'delete' command with the
     // OLD indexed column values; a plain DELETE corrupts the index.
     db.prepare(
-      `INSERT INTO exchanges_fts (exchanges_fts, rowid, user_text, assistant_text, tool_names)
-       VALUES ('delete', ?, ?, ?, ?)`,
-    ).run(rowid, existing.user_text, existing.assistant_text ?? "", existing.tool_names ?? "[]");
+      `INSERT INTO exchanges_fts (exchanges_fts, rowid, user_text, assistant_text, tool_names, tool_event_text)
+       VALUES ('delete', ?, ?, ?, ?, ?)`,
+    ).run(rowid, existing.user_text, existing.assistant_text ?? "", existing.tool_names ?? "[]", existing.tool_event_text ?? "");
     db.prepare(`DELETE FROM exchanges_vec WHERE rowid = ?`).run(BigInt(rowid));
   } else {
     const insert = db
       .prepare(
         `INSERT INTO exchanges
-          (session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text, tool_names)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text, tool_names, tool_events, tool_event_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         ex.sessionId,
@@ -138,14 +205,16 @@ export function insertExchange(db: Database.Database, ex: InsertableExchange): b
         ex.userText,
         ex.assistantText,
         toolNamesJson,
+        toolEventsJson,
+        toolEventText,
       );
     rowid = Number(insert.lastInsertRowid);
   }
 
   db.prepare(
-    `INSERT INTO exchanges_fts (rowid, user_text, assistant_text, tool_names)
-     VALUES (?, ?, ?, ?)`,
-  ).run(rowid, ex.userText, ex.assistantText, toolNamesJson);
+    `INSERT INTO exchanges_fts (rowid, user_text, assistant_text, tool_names, tool_event_text)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(rowid, ex.userText, ex.assistantText, toolNamesJson, toolEventText);
 
   db.prepare(
     `INSERT INTO exchanges_vec (rowid, embedding) VALUES (?, ?)`,

@@ -2,7 +2,8 @@
 // All logging goes to stderr; stdout is reserved for CLI/MCP output.
 import type { FeatureExtractionPipeline } from "@xenova/transformers";
 
-import { EMBEDDING_DIM } from "./types.js";
+import { EMBEDDING_DIM, type ToolEvent } from "./types.js";
+import { toolEventsIndexText } from "./tool-events.js";
 
 let pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
 
@@ -53,12 +54,15 @@ export async function embedExchange(
   userText: string,
   assistantText: string,
   toolNames: string[],
+  toolEvents: ToolEvent[] = [],
 ): Promise<Float32Array> {
   const tools = toolNames.length > 0 ? `\n\nTools: ${truncate(toolNames.join(", "), TOOL_CHARS)}` : "";
+  const eventText = toolEvents.length > 0 ? `\n\nTool events: ${truncate(toolEventsIndexText(toolEvents), 400)}` : "";
   const composed =
     `User: ${truncate(userText, USER_CHARS)}` +
     `\n\nAssistant: ${truncate(assistantText, ASSISTANT_CHARS)}` +
-    tools;
+    tools +
+    eventText;
   return embed(composed);
 }
 

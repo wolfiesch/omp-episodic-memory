@@ -36,8 +36,23 @@ test("ordinals are sequential from 0 and timestamps are unix seconds", () => {
 
 test("toolNames extraction per exchange", () => {
 	const exchanges = parseSessionFile(fixtureA);
-	assert.ok(exchanges[0].toolNames.includes("bash"));
+	assert.deepEqual(exchanges[0].toolNames, ["bash", "read"]);
 	assert.deepEqual(exchanges[1].toolNames, []);
+});
+
+test("tool events capture command, file path, result text, error state, details, and exit code", () => {
+	const exchanges = parseSessionFile(fixtureA);
+	assert.equal(exchanges[0].toolEvents.length, 2);
+	const bashEvent = exchanges[0].toolEvents[0];
+	assert.equal(bashEvent.callId, "t1");
+	assert.equal(bashEvent.command, "npm rebuild sqlite-vec");
+	assert.equal(bashEvent.isError, true);
+	assert.equal(bashEvent.exitCode, 1);
+	assert.ok(bashEvent.resultText?.includes("ABI_MISMATCH_SENTINEL"));
+	const readEvent = exchanges[0].toolEvents[1];
+	assert.deepEqual(readEvent.filePaths, ["src/db.ts"]);
+	assert.equal(readEvent.isError, false);
+	assert.equal(readEvent.details?.resolvedPath, "/tmp/fixture/src/db.ts");
 });
 
 test("assistantText and userText are captured", () => {
@@ -94,6 +109,7 @@ test("parseSessionFileStream parity with parseSessionFile", async () => {
 	assert.equal(exchangesStream[0].userText, exchangesSync[0].userText);
 	assert.equal(exchangesStream[0].assistantText, exchangesSync[0].assistantText);
 	assert.deepEqual(exchangesStream[0].toolNames, exchangesSync[0].toolNames);
+	assert.deepEqual(exchangesStream[0].toolEvents, exchangesSync[0].toolEvents);
 	assert.equal(exchangesStream[0].sessionId, exchangesSync[0].sessionId);
 	assert.equal(exchangesStream[0].title, exchangesSync[0].title);
 	assert.equal(exchangesStream[0].cwd, exchangesSync[0].cwd);

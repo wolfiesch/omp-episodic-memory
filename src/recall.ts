@@ -8,7 +8,8 @@ import type Database from "better-sqlite3";
 
 import { search } from "./search.js";
 import { searchMemoryRecords, type MemoryRecord, type MemoryType } from "./memory.js";
-import type { SearchHit, SearchMode } from "./types.js";
+import type { SearchHit, SearchMode, ToolEvent } from "./types.js";
+import { formatToolEventSummary } from "./tool-events.js";
 
 /** Retrieval intents inferred from the task text. */
 export type RecallIntent =
@@ -45,6 +46,7 @@ export interface RecallEvidence {
   quote: string;
   /** Per-evidence confidence signal (memory confidence, or fused rank for episodes). */
   score: number;
+  toolEvents?: ToolEvent[];
 }
 
 export interface RecallBundle {
@@ -71,6 +73,8 @@ export interface RecallOptions {
   after?: number;
   /** Only consider evidence at/before this unix-seconds time. */
   before?: number;
+  toolName?: string;
+  toolError?: boolean;
 }
 
 const CHARS_PER_TOKEN = 4;
@@ -173,7 +177,7 @@ function isoDate(unixSeconds: number | null): string | null {
 }
 
 function episodeToEvidence(hit: SearchHit): RecallEvidence {
-  return {
+  const evidence: RecallEvidence = {
     kind: "episode",
     title: hit.title ?? hit.sessionId,
     date: isoDate(hit.timestamp),
@@ -183,6 +187,8 @@ function episodeToEvidence(hit: SearchHit): RecallEvidence {
     quote: clip(hit.snippet, 240),
     score: hit.score,
   };
+  if (hit.toolEvents.length > 0) evidence.toolEvents = hit.toolEvents;
+  return evidence;
 }
 
 function memoryToEvidence(rec: MemoryRecord): RecallEvidence {
@@ -277,6 +283,8 @@ export async function recallForTask(
       limit: 8,
       after: opts.after,
       before: opts.before,
+      toolName: opts.toolName,
+      toolError: opts.toolError,
     });
   }
 
@@ -319,15 +327,15 @@ export async function recallForTask(
     // `snippet` is only user_text; the search may have matched assistant_text or
     // tool names, so hydrate the full exchange text before gating an episode.
     const hydrateText = db.prepare(
-      `SELECT user_text, assistant_text, tool_names FROM exchanges
+      `SELECT user_text, assistant_text, tool_names, tool_event_text FROM exchanges
        WHERE session_id = ? AND ordinal = ?`,
     );
     episodes = episodes.filter((e) => {
       const row = hydrateText.get(e.sessionId, e.ordinal) as
-        | { user_text: string; assistant_text: string | null; tool_names: string | null }
+        | { user_text: string; assistant_text: string | null; tool_names: string | null; tool_event_text: string | null }
         | undefined;
       const full = row
-        ? `${e.title ?? ""} ${row.user_text} ${row.assistant_text ?? ""} ${row.tool_names ?? ""}`
+        ? `${e.title ?? ""} ${row.user_text} ${row.assistant_text ?? ""} ${row.tool_names ?? ""} ${row.tool_event_text ?? ""}`
         : `${e.title ?? ""} ${e.snippet}`;
       return relevant(full);
     });
@@ -360,7 +368,10 @@ export async function recallForTask(
   const lines: string[] = [];
   let usedTokens = Math.ceil(summary.length / CHARS_PER_TOKEN);
   for (const ev of evidence) {
-    const line = `- [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}: ${ev.quote}`;
+    const toolLine = ev.toolEvents?.length
+      ? ` Tools: ${ev.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 80)).join("; ")}`
+      : "";
+    const line = `- [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}: ${ev.quote}${toolLine}`;
     const cost = Math.ceil(line.length / CHARS_PER_TOKEN);
     if (usedTokens + cost > maxTokens) break;
     lines.push(line);
@@ -395,6 +406,9 @@ export function formatBundle(bundle: RecallBundle): string {
       const loc = ev.path ? ` — ${ev.path}${ev.ordinal !== null ? `#${ev.ordinal}` : ""}` : "";
       lines.push(`${i + 1}. [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}${loc}`);
       lines.push(`   ${ev.quote}`);
+      if (ev.toolEvents?.length) {
+        lines.push(`   Tools: ${ev.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 80)).join("; ")}`);
+      }
     });
   }
   lines.push("");

@@ -126,6 +126,20 @@ test("exact single identifier token can answer when present", async () => {
   assert.ok(bundle.evidence.length >= 1);
 });
 
+test("recall evidence includes tool output matches", async () => {
+  const bundle = await recallForTask(db, {
+    task: "ABI_MISMATCH_SENTINEL command failed",
+    mode: "text",
+  });
+  assert.equal(bundle.answerable, true);
+  assert.ok(
+    bundle.evidence.some((ev) =>
+      ev.quote.includes("ABI_MISMATCH_SENTINEL") ||
+      ev.toolEvents?.some((event) => event.resultText?.includes("ABI_MISMATCH_SENTINEL")),
+    ),
+  );
+});
+
 test("single identifier match does not hide a missing nonce", async () => {
   const bundle = await recallForTask(db, {
     task: "sqlite-vec zzqqxx",
@@ -151,6 +165,7 @@ test("vector fallback abstains when only generic project words overlap", async (
         userText: "continue project work",
         assistantText: "Project notes and project planning only.",
         toolNames: [],
+        toolEvents: [],
       },
       999,
     ),
@@ -180,6 +195,7 @@ test("vector fallback abstains when only generic action verbs overlap", async ()
         userText: "integrate configure install continue workflow",
         assistantText: "Integration workflow notes without any product-specific evidence.",
         toolNames: [],
+        toolEvents: [],
       },
       1000,
     ),
@@ -244,6 +260,16 @@ test("formatBundle renders confidence tier and evidence lines", async () => {
   assert.ok(text.length > 0);
   assert.ok(text.includes(bundle.confidence));
   assert.ok(/^\d+\.\s/m.test(text), "expected at least one numbered evidence line");
+});
+
+test("formatBundle renders tool summaries for episode evidence", async () => {
+  const bundle = await recallForTask(db, {
+    task: "ABI_MISMATCH_SENTINEL command failed",
+    mode: "text",
+  });
+  const text = formatBundle(bundle);
+  assert.match(text, /Tools: .*bash/);
+  assert.match(text, /exitCode=1/);
 });
 
 test("recommendedNextSteps is non-empty for answerable and abstain bundles", async () => {

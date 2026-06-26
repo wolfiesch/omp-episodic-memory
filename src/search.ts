@@ -4,6 +4,7 @@ import type Database from "better-sqlite3";
 
 import { embed } from "./embeddings.js";
 import type { SearchHit, SearchOptions } from "./types.js";
+import { formatToolEventSummary, parseToolEvents } from "./tool-events.js";
 
 /** RRF constant. */
 const RRF_K = 60;
@@ -18,6 +19,7 @@ interface ExchangeRow {
   timestamp: number;
   user_text: string;
   assistant_text: string;
+  tool_events: string | null;
 }
 
 /**
@@ -63,6 +65,15 @@ function textSearch(db: Database.Database, query: string, k: number): number[] {
   return rows.map((r) => Number(r.rowid));
 }
 
+/** Build a 1-based rank map (first occurrence wins) from an ordered id list. */
+function rankMap(ids: number[]): Map<number, number> {
+  const ranks = new Map<number, number>();
+  ids.forEach((id, i) => {
+    if (!ranks.has(id)) ranks.set(id, i + 1);
+  });
+  return ranks;
+}
+
 export async function search(
   db: Database.Database,
   opts: SearchOptions,
@@ -70,7 +81,12 @@ export async function search(
   const mode = opts.mode ?? "both";
   const limit = opts.limit ?? 10;
   const hasDateFilter = opts.after !== undefined || opts.before !== undefined;
-  const k = hasDateFilter ? Math.max(limit * 20, 500) : Math.max(limit * 5, 50);
+  const hasToolFilter = opts.toolName !== undefined || opts.toolError !== undefined;
+  const k = hasToolFilter
+    ? Math.max(limit * 100, 1000)
+    : hasDateFilter
+      ? Math.max(limit * 20, 500)
+      : Math.max(limit * 5, 50);
 
   // Per-branch ordered id lists (best first).
   let vectorIds: number[] = [];
@@ -84,23 +100,16 @@ export async function search(
     textIds = textSearch(db, opts.query, k);
   }
 
-  // 1-based rank maps for each branch.
-  const vectorRanks = new Map<number, number>();
-  vectorIds.forEach((id, i) => {
-    if (!vectorRanks.has(id)) vectorRanks.set(id, i + 1);
-  });
-  const textRanks = new Map<number, number>();
-  textIds.forEach((id, i) => {
-    if (!textRanks.has(id)) textRanks.set(id, i + 1);
-  });
+  // 1-based rank maps for each branch (first occurrence wins).
+  const vectorRanks = rankMap(vectorIds);
+  const textRanks = rankMap(textIds);
 
   // Fuse with RRF over the union of candidate ids.
   const fusedScore = new Map<number, number>();
-  for (const [id, rank] of vectorRanks) {
-    fusedScore.set(id, (fusedScore.get(id) ?? 0) + 1 / (RRF_K + rank));
-  }
-  for (const [id, rank] of textRanks) {
-    fusedScore.set(id, (fusedScore.get(id) ?? 0) + 1 / (RRF_K + rank));
+  for (const ranks of [vectorRanks, textRanks]) {
+    for (const [id, rank] of ranks) {
+      fusedScore.set(id, (fusedScore.get(id) ?? 0) + 1 / (RRF_K + rank));
+    }
   }
 
   if (fusedScore.size === 0) {
@@ -113,7 +122,7 @@ export async function search(
   );
 
   const selectRow = db.prepare(
-    `SELECT id, session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text
+    `SELECT id, session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text, tool_events
      FROM exchanges WHERE id = ?`,
   );
 
@@ -123,6 +132,9 @@ export async function search(
     if (!row) continue;
     if (opts.after !== undefined && row.timestamp < opts.after) continue;
     if (opts.before !== undefined && row.timestamp > opts.before) continue;
+    const toolEvents = parseToolEvents(row.tool_events);
+    if (opts.toolName !== undefined && !toolEvents.some((event) => event.toolName === opts.toolName)) continue;
+    if (opts.toolError !== undefined && !toolEvents.some((event) => event.isError === opts.toolError)) continue;
 
     const userPart = row.user_text.replace(/\s+/g, " ").trim();
     const asstPart = row.assistant_text.replace(/\s+/g, " ").trim();
@@ -132,6 +144,7 @@ export async function search(
     const parts: string[] = [];
     if (userPart) parts.push("U: " + userPart.slice(0, 100));
     if (asstPart) parts.push("A: " + asstPart.slice(0, 200));
+    for (const event of toolEvents.slice(0, 2)) parts.push("T: " + formatToolEventSummary(event, 120));
     const snippet = parts.length > 0 ? parts.join(" | ") : "";
 
     const rawScore = fusedScore.get(id) ?? 0;
@@ -150,6 +163,7 @@ export async function search(
       snippet,
       userSnippet: userPart.slice(0, 200),
       assistantSnippet: asstPart.slice(0, 200),
+      toolEvents,
       score: finalScore,
       vectorRank: vectorRanks.get(id) ?? null,
       textRank: textRanks.get(id) ?? null,

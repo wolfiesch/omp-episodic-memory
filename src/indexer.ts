@@ -12,6 +12,7 @@ import {
 import { embedExchange, initEmbeddings } from "./embeddings.js";
 import { isSessionFile, iterateSessionFile, parseSessionFile } from "./parser.js";
 import { DEFAULT_SESSIONS_DIR } from "./types.js";
+import { serializeToolEvents, toolEventsIndexText } from "./tool-events.js";
 
 export function findSessionFiles(root: string = DEFAULT_SESSIONS_DIR): string[] {
   const out: string[] = [];
@@ -107,7 +108,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
        ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, indexed_at=excluded.indexed_at`,
     );
     const selectContent = db.prepare(
-      `SELECT source_path, title, cwd, timestamp, user_text, assistant_text, tool_names
+      `SELECT source_path, title, cwd, timestamp, user_text, assistant_text, tool_names, tool_events, tool_event_text
        FROM exchanges WHERE session_id=? AND ordinal=?`,
     );
 
@@ -144,6 +145,8 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
           maxBytes: opts.maxBytes ?? 200 * 1024 * 1024,
         })) {
           const toolNamesJson = JSON.stringify(ex.toolNames);
+          const toolEventsJson = serializeToolEvents(ex.toolEvents);
+          const toolEventText = toolEventsIndexText(ex.toolEvents);
           const existing = selectContent.get(ex.sessionId, ex.ordinal) as
             | {
                 source_path: string;
@@ -153,6 +156,8 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
                 user_text: string;
                 assistant_text: string | null;
                 tool_names: string | null;
+                tool_events: string | null;
+                tool_event_text: string | null;
               }
             | undefined;
           if (
@@ -163,7 +168,9 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
             existing.timestamp === ex.timestamp &&
             existing.user_text === ex.userText &&
             (existing.assistant_text ?? "") === ex.assistantText &&
-            (existing.tool_names ?? "[]") === toolNamesJson
+            (existing.tool_names ?? "[]") === toolNamesJson &&
+            (existing.tool_events ?? "[]") === toolEventsJson &&
+            (existing.tool_event_text ?? "") === toolEventText
           ) {
             continue;
           }
@@ -172,6 +179,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
             ex.userText,
             ex.assistantText,
             ex.toolNames,
+            ex.toolEvents,
           );
           const inserted = runInTransaction(db, () =>
             insertExchange(db, { ...ex, embedding }) ? 1 : 0,

@@ -25,6 +25,7 @@ import { recallForTask, formatBundle } from "./recall.js";
 import { searchMemoryRecords, type MemoryRecord } from "./memory.js";
 import { getProjectContext, type ProjectContext } from "./blocks.js";
 import { DEFAULT_DB_PATH, DEFAULT_SESSIONS_DIR, type SearchHit } from "./types.js";
+import { formatToolEventSummary } from "./tool-events.js";
 
 const DB_PATH = process.env.OMP_EPISODIC_DB ?? DEFAULT_DB_PATH;
 const SESSIONS_ROOT = process.env.OMP_EPISODIC_SESSIONS_DIR ?? DEFAULT_SESSIONS_DIR;
@@ -36,6 +37,8 @@ const SearchInputSchema = z
     limit: z.number().min(1).max(50).default(10),
     after: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     before: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    tool: z.string().optional(),
+    tool_error: z.boolean().optional(),
     response_format: z.enum(["markdown", "json"]).default("markdown"),
   })
   .strict();
@@ -57,6 +60,8 @@ const RecallInputSchema = z
     max_context_tokens: z.number().min(100).max(8000).default(2000),
     after: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     before: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    tool: z.string().optional(),
+    tool_error: z.boolean().optional(),
     response_format: z.enum(["markdown", "json"]).default("markdown"),
   })
   .strict();
@@ -114,9 +119,11 @@ function formatHits(hits: SearchHit[], query: string): string {
     lines.push(
       `${i + 1}. [${proj}, ${date}] score=${h.score.toFixed(4)} (${signals})`,
       `   "${h.snippet}"`,
-      `   ${h.sourcePath} (exchange ${h.ordinal})`,
-      "",
     );
+    if (h.toolEvents.length > 0) {
+      lines.push(`   Tools: ${h.toolEvents.slice(0, 2).map((event) => formatToolEventSummary(event, 120)).join("; ")}`);
+    }
+    lines.push(`   ${h.sourcePath} (exchange ${h.ordinal})`, "");
   });
   return lines.join("\n");
 }
@@ -171,7 +178,13 @@ function formatConversation(
   for (const ex of exchanges) {
     out.push(`## Exchange ${ex.ordinal}`);
     if (ex.userText) out.push(`**User:** ${ex.userText}`, "");
-    if (ex.toolNames.length > 0) out.push(`_Tools: ${ex.toolNames.join(", ")}_`, "");
+    if (ex.toolEvents.length > 0) {
+      out.push("**Tools:**");
+      for (const event of ex.toolEvents) out.push(`- ${formatToolEventSummary(event, 200)}`);
+      out.push("");
+    } else if (ex.toolNames.length > 0) {
+      out.push(`_Tools: ${ex.toolNames.join(", ")}_`, "");
+    }
     if (ex.assistantText) out.push(`**Assistant:** ${ex.assistantText}`, "");
   }
   const allLines = out.join("\n").split("\n");
@@ -199,6 +212,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           limit: { type: "number", minimum: 1, maximum: 50, default: 10 },
           after: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
           before: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+          tool: { type: "string" },
+          tool_error: { type: "boolean" },
           response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" },
         },
         required: ["query"],
@@ -251,6 +266,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           max_context_tokens: { type: "number", minimum: 100, maximum: 8000, default: 2000 },
           after: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
           before: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+          tool: { type: "string" },
+          tool_error: { type: "boolean" },
           response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" },
         },
         required: ["task"],
@@ -324,6 +341,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: params.limit,
           after: toEpochSeconds(params.after),
           before: toEpochSeconds(params.before),
+          toolName: params.tool,
+          toolError: params.tool_error,
         });
         const text =
           params.response_format === "json"
@@ -347,6 +366,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           maxContextTokens: params.max_context_tokens,
           after: toEpochSeconds(params.after),
           before: toEpochSeconds(params.before),
+          toolName: params.tool,
+          toolError: params.tool_error,
         });
         const text =
           params.response_format === "json"

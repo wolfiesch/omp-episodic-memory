@@ -1,7 +1,8 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 
-import type { Exchange } from "./types.js";
+import type { Exchange, ToolEvent } from "./types.js";
+import { deriveCommand, deriveExitCode, deriveFilePaths, isRecord, normalizeArguments } from "./tool-events.js";
 
 export function isSessionFile(name: string): boolean {
 	return name.endsWith(".jsonl");
@@ -11,16 +12,18 @@ interface ContentPart {
 	type: string;
 	text?: string;
 	name?: string;
+	id?: string;
+	arguments?: unknown;
 }
 
 interface MessagePayload {
 	role?: string;
 	content?: unknown;
 	timestamp?: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
+	toolCallId?: string;
+	toolName?: string;
+	isError?: boolean;
+	details: Record<string, unknown> | null;
 }
 
 
@@ -31,7 +34,8 @@ function extractContentParts(content: unknown): ContentPart[] {
 		if (isRecord(item) && typeof item.type === "string") {
 			const text = typeof item.text === "string" ? item.text : undefined;
 			const name = typeof item.name === "string" ? item.name : undefined;
-			parts.push({ type: item.type, text, name });
+			const id = typeof item.id === "string" ? item.id : undefined;
+			parts.push({ type: item.type, text, name, id, arguments: item.arguments });
 		}
 	}
 	return parts;
@@ -42,7 +46,11 @@ function readMessagePayload(event: Record<string, unknown>): MessagePayload | nu
 	if (!isRecord(message)) return null;
 	const role = typeof message.role === "string" ? message.role : undefined;
 	const timestamp = typeof message.timestamp === "number" ? message.timestamp : undefined;
-	return { role, content: message.content, timestamp };
+	const toolCallId = typeof message.toolCallId === "string" ? message.toolCallId : undefined;
+	const toolName = typeof message.toolName === "string" ? message.toolName : undefined;
+	const isError = typeof message.isError === "boolean" ? message.isError : undefined;
+	const details = isRecord(message.details) ? message.details : null;
+	return { role, content: message.content, timestamp, toolCallId, toolName, isError, details };
 }
 
 function sessionIdFromFilename(filePath: string): string {
@@ -70,6 +78,7 @@ interface PendingExchange {
 	/** Total assistant chars dropped past the cap, for an honest clip marker at flush. */
 	assistantDropped: number;
 	toolNames: string[];
+	toolEvents: ToolEvent[];
 	timestamp: number;
 	ordinal: number;
 }
@@ -80,6 +89,12 @@ function clipText(text: string, max: number): string {
 		return text.slice(0, max) + `\n\u2026[clipped ${clipped} chars]`;
 	}
 	return text;
+}
+
+interface ParserOptions {
+	maxBytes?: number;
+	maxExchangeChars?: number;
+	maxToolResultChars?: number;
 }
 
 interface ParserState {
@@ -117,6 +132,7 @@ function flushPending(
 			userText,
 			assistantText,
 			toolNames: pending.toolNames,
+			toolEvents: pending.toolEvents,
 		};
 		state.exchanges?.push(exchange);
 	}
@@ -128,11 +144,64 @@ function processMessageEvent(
 	event: Record<string, unknown>,
 	state: ParserState,
 	filePath: string,
-	maxExchangeChars: number
+	maxExchangeChars: number,
+	maxToolResultChars: number
 ): Exchange | null {
 	const payload = readMessagePayload(event);
 	if (payload === null) return null;
 	const parts = extractContentParts(payload.content);
+
+	if (payload.role === "toolResult" && state.pending !== null) {
+		const resultTexts: string[] = [];
+		for (const part of parts) {
+			if (part.type === "text" && part.text && part.text.length > 0) {
+				resultTexts.push(part.text);
+			}
+		}
+		const resultText = resultTexts.length > 0 ? clipText(resultTexts.join("\n\n"), maxToolResultChars) : null;
+		const pending = state.pending;
+		const callId = payload.toolCallId ?? null;
+		const details = payload.details;
+		let eventToUpdate: ToolEvent | undefined;
+		if (callId !== null) {
+			for (let i = pending.toolEvents.length - 1; i >= 0; i--) {
+				const event = pending.toolEvents[i];
+				if (event.callId === callId) {
+					eventToUpdate = event;
+					break;
+				}
+			}
+		}
+		if (eventToUpdate === undefined && payload.toolName !== undefined) {
+			for (let i = pending.toolEvents.length - 1; i >= 0; i--) {
+				const event = pending.toolEvents[i];
+				if (event.toolName === payload.toolName && event.resultText === null) {
+					eventToUpdate = event;
+					break;
+				}
+			}
+		}
+		if (eventToUpdate === undefined) {
+			eventToUpdate = {
+				callId,
+				toolName: payload.toolName ?? "unknown",
+				arguments: null,
+				resultText: null,
+				isError: null,
+				details: null,
+				exitCode: null,
+				filePaths: [],
+				command: null,
+			};
+			pending.toolEvents.push(eventToUpdate);
+			if (!pending.toolNames.includes(eventToUpdate.toolName)) pending.toolNames.push(eventToUpdate.toolName);
+		}
+		eventToUpdate.resultText = resultText;
+		eventToUpdate.isError = payload.isError ?? null;
+		eventToUpdate.details = details;
+		eventToUpdate.exitCode = deriveExitCode(details, resultText);
+		return null;
+	}
 
 	if (payload.role === "user") {
 		const userTexts: string[] = [];
@@ -159,6 +228,7 @@ function processMessageEvent(
 			assistantLen: 0,
 			assistantDropped: 0,
 			toolNames: [],
+			toolEvents: [],
 			timestamp,
 			ordinal: state.ordinal++,
 		};
@@ -184,8 +254,20 @@ function processMessageEvent(
 					pending.assistantText.push(part.text);
 					pending.assistantLen += part.text.length;
 				}
-			} else if (part.type === "toolCall" && part.name && !pending.toolNames.includes(part.name)) {
-				pending.toolNames.push(part.name);
+			} else if (part.type === "toolCall" && part.name) {
+				const args = normalizeArguments(part.arguments);
+				pending.toolEvents.push({
+					callId: part.id ?? null,
+					toolName: part.name,
+					arguments: args,
+					resultText: null,
+					isError: null,
+					details: null,
+					exitCode: null,
+					filePaths: deriveFilePaths(args),
+					command: deriveCommand(args),
+				});
+				if (!pending.toolNames.includes(part.name)) pending.toolNames.push(part.name);
 			}
 		}
 	}
@@ -194,7 +276,7 @@ function processMessageEvent(
 
 export function parseSessionFile(
 	filePath: string,
-	opts?: { maxBytes?: number; maxExchangeChars?: number }
+	opts?: ParserOptions
 ): Exchange[] {
 	// Explicit maxBytes -> hard throw (indexer/tests rely on this).
 	// No explicit maxBytes -> apply a default cap and SKIP (return empty + warn) so a
@@ -214,6 +296,7 @@ export function parseSessionFile(
 	}
 
 	const maxExchangeChars = opts?.maxExchangeChars ?? 100_000;
+	const maxToolResultChars = opts?.maxToolResultChars ?? 20_000;
 	// Absolute sanity bound for a single raw line (catches pathological multi-hundred-MB
 	// lines), independent of the content clip cap so a small maxExchangeChars never drops
 	// normal message lines.
@@ -280,7 +363,7 @@ export function parseSessionFile(
 			const event = JSON.parse(trimmed);
 			if (!isRecord(event)) continue;
 			if (event.type !== "message") continue;
-			processMessageEvent(event, state, filePath, maxExchangeChars);
+			processMessageEvent(event, state, filePath, maxExchangeChars, maxToolResultChars);
 		} catch {
 			// Skip lines that fail to parse
 		}
@@ -339,7 +422,7 @@ async function* readCappedJsonlLines(
 }
 export async function* iterateSessionFile(
 	filePath: string,
-	opts?: { maxBytes?: number; maxExchangeChars?: number }
+	opts?: ParserOptions
 ): AsyncGenerator<Exchange> {
 	const size = statSync(filePath).size;
 	if (opts?.maxBytes !== undefined && size > opts.maxBytes) {
@@ -348,6 +431,7 @@ export async function* iterateSessionFile(
 	}
 
 	const maxExchangeChars = opts?.maxExchangeChars ?? 100_000;
+	const maxToolResultChars = opts?.maxToolResultChars ?? 20_000;
 	const maxLineLength = Math.max(maxExchangeChars * 4, 10_000_000);
 
 	let sessionId: string | null = null;
@@ -395,7 +479,7 @@ export async function* iterateSessionFile(
 				state.title = null;
 				state.cwd = null;
 			}
-			const flushed = processMessageEvent(event, state, filePath, maxExchangeChars);
+			const flushed = processMessageEvent(event, state, filePath, maxExchangeChars, maxToolResultChars);
 			if (flushed !== null) yield flushed;
 		}
 	}
@@ -406,7 +490,7 @@ export async function* iterateSessionFile(
 
 export async function parseSessionFileStream(
 	filePath: string,
-	opts?: { maxBytes?: number; maxExchangeChars?: number }
+	opts?: ParserOptions
 ): Promise<Exchange[]> {
 	const exchanges: Exchange[] = [];
 	for await (const exchange of iterateSessionFile(filePath, opts)) {

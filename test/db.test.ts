@@ -7,9 +7,10 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
-import type Database from "better-sqlite3";
+import Database from "better-sqlite3";
 import {
   openDb,
+  openReadOnlyDb,
   insertExchange,
   getStats,
   runInTransaction,
@@ -17,6 +18,7 @@ import {
 } from "../src/db.js";
 import { parseSessionFile } from "../src/parser.js";
 import { EMBEDDING_DIM, type Exchange } from "../src/types.js";
+import { parseToolEvents } from "../src/tool-events.js";
 
 const FIXTURES_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -48,6 +50,42 @@ function allFixtureExchanges(): Exchange[] {
     .filter((n) => n.endsWith(".jsonl"))
     .sort()
     .flatMap((n) => parseSessionFile(join(FIXTURES_DIR, n)));
+}
+
+function tableColumns(db: Database.Database, table: string): string[] {
+  return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((row) => row.name);
+}
+
+function createLegacyDb(path: string): void {
+  const legacy = new Database(path);
+  try {
+    legacy.exec(`
+      CREATE TABLE exchanges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        title TEXT,
+        cwd TEXT,
+        ordinal INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL,
+        user_text TEXT NOT NULL,
+        assistant_text TEXT,
+        tool_names TEXT,
+        UNIQUE(session_id, ordinal)
+      );
+      CREATE VIRTUAL TABLE exchanges_fts USING fts5(
+        user_text,
+        assistant_text,
+        tool_names,
+        content='exchanges',
+        content_rowid='id'
+      );
+      INSERT INTO exchanges (session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text, tool_names)
+      VALUES ('legacy', '/tmp/fixture/legacy.jsonl', 'legacy', '/tmp/fixture', 0, 1, 'user', 'assistant', '[]');
+    `);
+  } finally {
+    legacy.close();
+  }
 }
 
 let dbPath: string;
@@ -130,4 +168,63 @@ test("inserting all 6 fixture exchanges yields 6 exchanges / 3 sessions", () => 
   const timestamps = exchanges.map((e) => e.timestamp);
   assert.equal(stats.earliest, Math.min(...timestamps));
   assert.equal(stats.latest, Math.max(...timestamps));
+});
+
+test("insertExchange persists serialized tool events and FTS text", () => {
+  const ex = allFixtureExchanges()[0];
+  assert.ok(ex, "fixture exchange must exist");
+  insertExchange(db, toInsertable(ex, 42));
+  const row = db
+    .prepare(`SELECT tool_events, tool_event_text FROM exchanges WHERE session_id = ? AND ordinal = ?`)
+    .get(ex.sessionId, ex.ordinal) as { tool_events: string | null; tool_event_text: string | null };
+  const events = parseToolEvents(row.tool_events);
+  assert.equal(events[0]?.toolName, "bash");
+  assert.match(row.tool_event_text ?? "", /ABI_MISMATCH_SENTINEL/);
+  assert.match(row.tool_event_text ?? "", /npm rebuild sqlite-vec/);
+  assert.match(row.tool_event_text ?? "", /src\/db\.ts/);
+  assert.match(row.tool_event_text ?? "", /exitCode\s+1/);
+});
+
+test("initSchema migrates legacy exchange tables", () => {
+  const path = join(tmpdir(), "omp-epi-legacy-" + randomUUID() + ".db");
+  createLegacyDb(path);
+  const migrated = openDb(path);
+  try {
+    assert.ok(tableColumns(migrated, "exchanges").includes("tool_events"));
+    assert.ok(tableColumns(migrated, "exchanges").includes("tool_event_text"));
+    assert.ok(tableColumns(migrated, "exchanges_fts").includes("tool_event_text"));
+    const row = migrated.prepare("SELECT COUNT(*) AS count FROM exchanges").get() as { count: number };
+    assert.equal(row.count, 1);
+  } finally {
+    migrated.close();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(path + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
+});
+
+test("openReadOnlyDb reports old schema clearly", () => {
+  const path = join(tmpdir(), "omp-epi-old-readonly-" + randomUUID() + ".db");
+  createLegacyDb(path);
+  try {
+    assert.throws(
+      () => openReadOnlyDb(path),
+      /Index DB schema is outdated\. Run "omp-episodic index --force" once to migrate tool event columns\./,
+    );
+    openDb(path).close();
+    const readonly = openReadOnlyDb(path);
+    readonly.close();
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(path + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
 });

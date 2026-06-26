@@ -2,6 +2,18 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+export interface ToolEvent {
+  callId: string | null;
+  toolName: string;
+  arguments: Record<string, unknown> | null;
+  resultText: string | null;
+  isError: boolean | null;
+  details: Record<string, unknown> | null;
+  exitCode: number | null;
+  filePaths: string[];
+  command: string | null;
+}
+
 /**
  * One indexable unit: a user turn paired with the assistant's response text
  * that followed it, within a single OMP session.
@@ -25,6 +37,7 @@ export interface Exchange {
   assistantText: string;
   /** Distinct tool names invoked in the assistant span (for keyword recall). */
   toolNames: string[];
+  toolEvents: ToolEvent[];
 }
 
 /** Embedding model output dimension. all-MiniLM-L6-v2 => 384. */
@@ -50,6 +63,7 @@ export interface SearchHit {
   snippet: string;
   userSnippet?: string;
   assistantSnippet?: string;
+  toolEvents: ToolEvent[];
   /** Fused relevance score (higher = better). */
   score: number;
   /** Per-signal debug scores. */
@@ -67,6 +81,8 @@ export interface SearchOptions {
   after?: number;
   /** Only hits at/before this unix-seconds time. */
   before?: number;
+  toolName?: string;
+  toolError?: boolean;
 }
 
 /** Default location of the prototype index DB (kept OUT of ~/.omp to avoid touching native state). */

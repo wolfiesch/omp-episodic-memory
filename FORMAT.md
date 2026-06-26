@@ -35,9 +35,12 @@ from their own header line if present, else falls back to the JSONL filename ste
   can have `text: ""` (phase markers). Skip empty strings.
 - `{ "type": "thinking", ... }` — IGNORE (do not index reasoning).
 - `{ "type": "toolCall", "name": "read", "arguments": {...}, "id": "..." }` —
-  collect `name` into the exchange's `toolNames`.
+  collect distinct `name`s into `toolNames` and append a `toolEvents` entry with
+  `callId`, `toolName`, normalized `arguments`, derived `command`, and derived
+  top-level `filePaths`.
 - `{ "type": "image", ... }` — IGNORE.
-- Role `toolResult` messages — IGNORE their content for text; they are not user/assistant prose.
+- Role `toolResult` messages — ignore their content for assistant prose, but
+  merge it into `toolEvents.resultText`, `isError`, `details`, and `exitCode`.
 
 ## Exchange assembly (parser output = Exchange[])
 
@@ -50,9 +53,12 @@ Walk `message` events in file order. Maintain a "current exchange" state machine
      line `timestamp` ISO to epoch seconds, `ordinal` = running counter.
 2. On `assistant` messages that follow (before the next `user`):
    - append non-empty `text` parts to `assistantText` (`\n\n` between parts),
-   - add any `toolCall` `name`s to `toolNames` (dedup).
-3. `toolResult` and all non-message lines: ignore.
-4. At EOF, flush the final in-progress exchange.
+   - add any `toolCall` `name`s to `toolNames` (dedup),
+   - append corresponding `toolEvents` with call id, arguments, command, and file paths.
+3. On `toolResult` messages that follow (before the next `user`), merge result
+   text, error state, details, and exit code into the matching `toolEvents` item.
+4. All non-message lines: ignore.
+5. At EOF, flush the final in-progress exchange.
 
 Drop exchanges whose `userText` is empty after trimming. An exchange with empty
 `assistantText` is still valid (user turn with no captured prose reply).

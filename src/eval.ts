@@ -163,7 +163,7 @@ export async function runEval(opts: EvalOptions): Promise<EvalReport> {
         for (const ex of exchanges) {
           const embedding = useFake
             ? fakeEmbedding(seed++)
-            : await embedExchange(ex.userText, ex.assistantText, ex.toolNames);
+            : await embedExchange(ex.userText, ex.assistantText, ex.toolNames, ex.toolEvents);
           insertables.push({ ...ex, embedding });
         }
         runInTransaction(db, () => {

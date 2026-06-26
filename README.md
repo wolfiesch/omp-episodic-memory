@@ -37,6 +37,7 @@ Read-only with respect to OMP state: it never edits, compresses, or curates OMP'
 - [Requirements](#requirements)
 - [Layout](#layout)
 - [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
 - [License](#license)
 
 ## Why not just use OMP memory?
@@ -91,10 +92,10 @@ The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/
 
 | Stage | What happens |
 | --- | --- |
-| **Parse** | Walks `${OMP_SESSIONS_DIR:-~/.omp/agent/sessions}/**/*.jsonl`, assembling each user turn plus the assistant reply that followed into an `Exchange`. |
-| **Embed** | Uses `Xenova/all-MiniLM-L6-v2` (384-d) via `@xenova/transformers`. First run downloads the model if it is not already cached. No API keys are required. |
-| **Store** | Writes to a local SQLite database with FTS5 keyword tables and a `sqlite-vec` `vec0` vector table. |
-| **Search** | Fuses vector and keyword branches with Reciprocal Rank Fusion (RRF). Supports `both`, `vector`, and `text` modes. |
+| **Parse** | Walks `${OMP_SESSIONS_DIR:-~/.omp/agent/sessions}/**/*.jsonl`, assembling each user turn plus the assistant reply that followed into an `Exchange`, including tool calls/results, command text, file paths, error state, details, and exit status. |
+| **Embed** | Uses `Xenova/all-MiniLM-L6-v2` (384-d) via `@xenova/transformers`. First run downloads the model if it is not already cached. No API keys are required. Tool event text contributes to retrieval. |
+| **Store** | Writes exchanges, serialized tool events, FTS5 keyword tables, and a `sqlite-vec` `vec0` vector table to local SQLite. |
+| **Search** | Fuses vector and keyword branches with Reciprocal Rank Fusion (RRF). Supports `both`, `vector`, `text`, tool-name filters, and tool-error filters. |
 | **Derive** | Extracts typed memory (decisions, gotchas, runbooks) into a reviewable inbox; builds a temporal entity/edge graph with supersession. |
 
 ## CLI
@@ -102,6 +103,7 @@ The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/
 ```sh
 omp-episodic index                              # index all sessions
 omp-episodic search "sqlite-vec" --mode text    # keyword-only search
+omp-episodic search "Command exited with code 1" --mode text --tool bash --tool-error true
 omp-episodic recall "fix flaky vector search"   # task-scoped evidence bundle
 omp-episodic stats                              # index statistics
 ```
@@ -111,8 +113,8 @@ omp-episodic stats                              # index statistics
 | Command | Description |
 | --- | --- |
 | `index` | Index OMP transcripts into the local SQLite database. |
-| `search` | Hybrid search over indexed exchanges (`--mode both\|vector\|text`). |
-| `recall` | Build a task-scoped evidence bundle with confidence and abstention. |
+| `search` | Hybrid search over indexed exchanges (`--mode both\|vector\|text`, `--tool NAME`, `--tool-error true\|false`). |
+| `recall` | Build a task-scoped evidence bundle with confidence and abstention; supports the same tool filters as `search`. |
 | `stats` | Show index statistics (exchanges, sessions, date range). |
 | `extract` | Propose typed derived memories (decisions/gotchas/runbooks) into the inbox. |
 | `inbox` | List derived memories by status (pending/approved/rejected/superseded). |
@@ -314,6 +316,16 @@ Contributions are welcome. To get started:
 4. Open a pull request describing the change and its motivation. CI runs the type-check, test suite, and the OMP-MemBench gate on every push.
 
 Bug reports and feature requests are tracked in [GitHub Issues](https://github.com/wolfiesch/omp-episodic-memory/issues). See [`RELEASING.md`](RELEASING.md) for the release process and [`CHANGELOG.md`](CHANGELOG.md) for the version history.
+
+## Acknowledgements
+
+`omp-episodic-memory` was inspired in part by Jesse Vincent's
+[`episodic-memory`](https://github.com/obra/episodic-memory), which brings
+semantic recall to Claude Code and Codex conversations.
+
+This project is an independent Oh My Pi-focused implementation. Its emphasis is
+raw OMP transcript provenance, reviewable derived memories, task-scoped recall,
+gotchas/runbooks, and recall-quality evaluation.
 
 ## License
 
