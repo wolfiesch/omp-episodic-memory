@@ -18,8 +18,9 @@ import {
 import { recallForTask, formatBundle, type RecallInclude } from "./recall.js";
 import { extractGraph } from "./graph-extract.js";
 import { findEdges, getGraphStats, type EdgeType } from "./graph.js";
-import { supersedeDecisions, memoryDiff } from "./supersede.js";
 import { runEval, formatEvalReport } from "./eval.js";
+import { runExtractEval, formatExtractEvalReport } from "./extract-eval.js";
+import { supersedeDecisions, memoryDiff } from "./supersede.js";
 import {
   setBlock,
   listBlocks,
@@ -426,6 +427,18 @@ async function cmdEval(flags: Map<string, string>): Promise<void> {
   process.stdout.write(`${formatEvalReport(report)}\n`);
 }
 
+function cmdExtractEval(flags: Map<string, string>): void {
+  const report = runExtractEval({
+    sessionsDir: flags.get("sessions"),
+    labelsPath: flags.get("labels"),
+  });
+  if (flags.get("json") === "true") {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`${formatExtractEvalReport(report)}\n`);
+}
+
 function cmdContext(flags: Map<string, string>): void {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const db = openDb(dbPath);
@@ -545,6 +558,9 @@ async function main(): Promise<void> {
     case "eval":
       await cmdEval(flags);
       break;
+    case "extract-eval":
+      cmdExtractEval(flags);
+      break;
     case "context":
       cmdContext(flags);
       break;
@@ -568,6 +584,7 @@ async function main(): Promise<void> {
           "  graph    [build|edges|stats] [--db PATH] [--sessions DIR] [--type T] [--open] [--limit N] [--json]\n" +
           "  diff     --after YYYY-MM-DD [--db PATH] [--project P] [--json]\n" +
           "  eval     --questions PATH [--db PATH] [--sessions DIR] [--mode text|both|vector] [--no-build] [--json]\n" +
+          "  extract-eval [--sessions DIR] [--labels PATH] [--json]   Score extraction precision/duplicates\n" +
           "  context  [--db PATH] [--project P] [--limit N] [--json]   Pinned blocks + recent memory\n" +
           "  blocks   [list|set <kind>|rm <id>] [--db PATH] [--project P] [--content TEXT] [--json]\n",
       );

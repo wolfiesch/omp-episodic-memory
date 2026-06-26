@@ -1,0 +1,6 @@
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"decision","titleSubstring":"sqlite-vec","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"ABI","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"gotcha","titleSubstring":"fails","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":1,"type":"decision","titleSubstring":"sqlite-vec","correct":true}
+{"sessionId":"cccccccc-0000-7000-8000-000000000003","ordinal":0,"type":"decision","titleSubstring":"embedding","correct":true}
+{"sessionId":"aaaaaaaa-0000-7000-8000-000000000001","ordinal":0,"type":"runbook","titleSubstring":"gotcha","correct":false}
