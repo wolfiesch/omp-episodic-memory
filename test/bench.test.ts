@@ -19,7 +19,7 @@ test("runBench reports both gate and target tiers", async () => {
   });
   const gates = report.checks.filter((c) => c.tier === "gate");
   const targets = report.checks.filter((c) => c.tier === "target");
-  assert.ok(gates.length >= 5, "expected at least 5 gate checks");
+  assert.ok(gates.length >= 7, "expected at least 7 gate checks");
   assert.ok(targets.length >= 3, "expected at least 3 target checks");
 });
 
@@ -36,6 +36,34 @@ test("runBench keeps targets non-blocking", async () => {
   assert.equal(target.tier, "target");
 });
 
+test("runBench gates on a meaningful scored recall question set size", async () => {
+  const report = await runBench({
+    questionsPath: QUESTIONS,
+    sessionsDir: SESSIONS,
+    labelsPath: LABELS,
+    mode: "text",
+  });
+  const check = report.checks.find((c) => c.name === "recall-question-count");
+  assert.ok(check, "recall-question-count gate should exist");
+  assert.equal(check.tier, "gate");
+  assert.equal(check.threshold, 30);
+  assert.equal(check.pass, true);
+});
+
+test("runBench gates on fully labeled extraction candidates", async () => {
+  const report = await runBench({
+    questionsPath: QUESTIONS,
+    sessionsDir: SESSIONS,
+    labelsPath: LABELS,
+    mode: "text",
+  });
+  const check = report.checks.find((c) => c.name === "extract-unlabeled");
+  assert.ok(check, "extract-unlabeled gate should exist");
+  assert.equal(check.tier, "gate");
+  assert.equal(check.threshold, 0);
+  assert.equal(check.pass, true);
+});
+
 
 test("formatBenchReport renders gate/target sections and a Gate verdict", async () => {
   const report = await runBench({
@@ -49,4 +77,5 @@ test("formatBenchReport renders gate/target sections and a Gate verdict", async 
   assert.ok(text.includes("## Gates"));
   assert.ok(text.includes("## Targets"));
   assert.match(text.trim().split("\n").at(-1) ?? "", /Gate: (PASS|FAIL)/);
+  assert.match(text, /recall-question-count: \d+ >= 30/);
 });

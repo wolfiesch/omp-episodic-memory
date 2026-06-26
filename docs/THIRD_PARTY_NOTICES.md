@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This site bundles the following third-party asset(s).
+This site bundles the following third-party asset(s) and records prior-art acknowledgements.
 
 ## Oh My Pi logo (π mark)
 
@@ -33,6 +33,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Inspiration / prior art
+
+`omp-episodic-memory` was inspired in part by Jesse Vincent's
+[`episodic-memory`](https://github.com/obra/episodic-memory), an MIT-licensed
+project for semantic recall over Claude Code and Codex conversations.
+
+This is an acknowledgement of prior art and inspiration, not a bundled
+third-party asset notice.
 
 `omp-episodic-memory` is an independent project and is not officially affiliated
 with or endorsed by the Oh My Pi maintainers.

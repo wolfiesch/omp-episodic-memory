@@ -9,3 +9,27 @@
 {"id":"q-contradiction-recall-cache","query":"What is the current decision for recall cache storage after stale reads?","category":"contradiction","expectedMemoryTitles":["store recall cache in SQLite"]}
 {"id":"q-gotcha-bun-native","query":"What should we avoid when running native module tests under Bun?","category":"gotcha","expectedMemoryTitles":["Avoid running the test suite with bun test"]}
 {"id":"q-abstain-cloudflare","query":"configure Cloudflare durable objects migration zxqv","category":"abstain","mustAbstain":true}
+{"id":"q-decision-node22-release","query":"Why was the release workflow pinned to Node 22?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":0}]}
+{"id":"q-gotcha-npm-403-token-scope","query":"Why did npm publish return 403 even though the token authenticated?","category":"gotcha","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":1}]}
+{"id":"q-gotcha-revoke-exposed-token","query":"What should we do after accidentally pasting a publish token in chat?","category":"gotcha","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":2}]}
+{"id":"q-exact-pages-npx-install","query":"How did we fix the GitHub Pages install snippet?","category":"exact","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":3},{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":4}]}
+{"id":"q-procedural-pages-cache","query":"How do we verify the GitHub Pages site updated when the browser cache is stale?","category":"procedural","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":4}]}
+{"id":"q-gotcha-giant-transcript","query":"Why can very large OMP transcripts crash the parser?","category":"gotcha","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":5}]}
+{"id":"q-exact-no-max-bytes","query":"What does --no-max-bytes do for indexing?","category":"exact","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":6}]}
+{"id":"q-procedural-stream-parser","query":"How should the parser handle newline-delimited session files?","category":"procedural","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":7}]}
+{"id":"q-procedural-tool-event-schema","query":"How should the tool event schema feed recall?","category":"procedural","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":8}]}
+{"id":"q-procedural-terminal-ui","query":"When should terminal UI panels appear?","category":"procedural","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":9}]}
+{"id":"q-decision-plain-json-output","query":"Why keep --json and --plain separate from terminal polish?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":10}]}
+{"id":"q-gotcha-third-party-notice","query":"Why does the docs site acknowledge the Oh My Pi logo?","category":"gotcha","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":11}]}
+{"id":"q-procedural-provenance-release","query":"Why add a release checklist for provenance publishing?","category":"procedural","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":12}]}
+{"id":"q-decision-extract-precision-gate","query":"What was the decision about extract precision gates?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":13}]}
+{"id":"q-decision-recall-question-count","query":"Why use recall-question-count as a benchmark gate?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":14}]}
+{"id":"q-procedural-safe-dogfood-slice","query":"What is the safe way to dogfood real history?","category":"procedural","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":15}]}
+{"id":"q-gotcha-sanitized-secret-scan","query":"Why should dogfood outputs stay out of git?","category":"gotcha","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":16}]}
+{"id":"q-decision-session-level-scoring","query":"How do we score recall against session-level hits?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":17}]}
+{"id":"q-decision-langmem-scope","query":"Should we use LangMem for this project instead?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":18}]}
+{"id":"q-decision-dashboard-later","query":"Why avoid building a dashboard first?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":19}]}
+{"id":"q-exact-release-provenance-command","query":"Which command does the release checklist use for provenance publishing?","category":"exact","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":12}]}
+{"id":"q-decision-cli-before-dashboard","query":"Why prove CLI review workflows before dashboard work?","category":"decision","expectedEpisodes":[{"sessionId":"eeeeeeee-0000-7000-8000-000000000005","ordinal":19}]}
+{"id":"q-abstain-nextauth-oauth","query":"How do we configure NextAuth OAuth callback zxmn?","category":"abstain","mustAbstain":true}
+{"id":"q-abstain-rust-wasm","query":"How do we package the Rust wasm module with wasm-pack qvzz?","category":"abstain","mustAbstain":true}

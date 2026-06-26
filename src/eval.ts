@@ -126,12 +126,11 @@ function firstExpectedRank(bundle: RecallBundle, q: EvalQuestion): number | null
   const wantTitles = (q.expectedMemoryTitles ?? []).map((t) => t.toLowerCase());
   for (let i = 0; i < bundle.evidence.length; i++) {
     const ev = bundle.evidence[i];
-    if (ev.kind === "episode") {
-      const match = wantEpisodes.some(
-        (e) => e.sessionId === ev.sessionId && e.ordinal === ev.ordinal,
-      );
-      if (match) return i + 1;
-    } else {
+    const match = wantEpisodes.some(
+      (e) => e.sessionId === ev.sessionId && e.ordinal === ev.ordinal,
+    );
+    if (match) return i + 1;
+    if (ev.kind !== "episode") {
       const title = ev.title.toLowerCase();
       if (wantTitles.some((t) => title.includes(t))) return i + 1;
     }

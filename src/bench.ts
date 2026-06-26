@@ -69,10 +69,12 @@ export async function runBench(opts: BenchOptions): Promise<BenchReport> {
 
   const checks: ThresholdCheck[] = [
     // Gate-tier: CI-blocking floors set to currently-achievable values.
+    check("recall-question-count", recall.metrics.scored, ">=", 30, "gate"),
     check("recall@5", recall.metrics.recallAt5, ">=", 0.85, "gate"),
     check("abstention-fp", recall.metrics.falsePositiveRate, "<", 0.1, "gate"),
     check("latency-p95-ms", recall.metrics.latencyP95Ms, "<", 500, "gate"),
     check("extract-precision", extract.metrics.precision, ">=", 0.8, "gate"),
+    check("extract-unlabeled", extract.unlabeled.length, "<=", 0, "gate"),
     check("duplicate-rate", extract.metrics.duplicateRate, "<", 0.1, "gate"),
     // Target-tier: aspirational SOTA bars, never block the build.
     check("extract-precision-target", extract.metrics.precision, ">=", 0.85, "target"),
@@ -107,7 +109,9 @@ export function formatBenchReport(report: BenchReport): string {
       ? `${c.value.toFixed(1)}ms`
       : c.name === "mrr-target"
         ? c.value.toFixed(3)
-        : pct(c.value);
+        : c.name === "recall-question-count" || c.name === "extract-unlabeled"
+          ? c.value.toFixed(0)
+          : pct(c.value);
 
   for (const c of report.checks.filter((c) => c.tier === "gate")) {
     const mark = c.pass ? "✓" : "✗";
