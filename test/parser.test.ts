@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { isSessionFile, parseSessionFile, parseSessionFileStream } from "../src/parser.js";
+import { isSessionFile, iterateSessionFile, parseSessionFile, parseSessionFileStream } from "../src/parser.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = join(here, "fixtures", "sessions");
@@ -127,6 +127,56 @@ test("parseSessionFileStream and parseSessionFile throw error when file exceeds 
 			return err instanceof Error && err.message.startsWith("session file too large");
 		});
 	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("iterateSessionFile yields exchanges as an async iterable", async () => {
+	const exchanges = [];
+	for await (const exchange of iterateSessionFile(fixtureA)) {
+		exchanges.push(exchange);
+	}
+
+	assert.equal(exchanges.length, 2);
+	assert.equal(exchanges[0].sessionId, "aaaaaaaa-0000-7000-8000-000000000001");
+	assert.equal(exchanges[0].ordinal, 0);
+	assert.equal(exchanges[1].ordinal, 1);
+});
+
+test("iterateSessionFile yields first exchange before processing a pathological tail line", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "parser-early-yield-"));
+	const tmpFile = join(
+		dir,
+		"2026-06-20T10-00-00-000Z_dddddddd-0000-7000-8000-000000000008.jsonl",
+	);
+	const session = '{"type":"session","id":"dddddddd-0000-7000-8000-000000000008"}';
+	const user = '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"first user"}]}}';
+	const assistant = '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"first assistant"}]}}';
+	const nextUser = '{"type":"message","message":{"role":"user","content":[{"type":"text","text":"second user"}]}}';
+	const pathologicalTail =
+		'{"type":"message","message":{"role":"user","content":[{"type":"text","text":"' +
+		"x".repeat(11_000_000) +
+		'"}]}}';
+	writeFileSync(tmpFile, [session, user, assistant, nextUser, pathologicalTail].join("\n"));
+
+	const originalWrite = process.stderr.write;
+	let stderr = "";
+	process.stderr.write = ((chunk: string | Uint8Array) => {
+		stderr += String(chunk);
+		return true;
+	}) as typeof process.stderr.write;
+
+	try {
+		const iterator = iterateSessionFile(tmpFile, { maxExchangeChars: 30 })[Symbol.asyncIterator]();
+		const first = await iterator.next();
+		await iterator.return?.();
+
+		assert.equal(first.done, false);
+		assert.equal(first.value.userText, "first user");
+		assert.equal(first.value.assistantText, "first assistant");
+		assert.equal(stderr, "", "first next() must not consume or inspect the oversized tail");
+	} finally {
+		process.stderr.write = originalWrite;
 		rmSync(dir, { recursive: true, force: true });
 	}
 });

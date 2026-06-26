@@ -1,5 +1,4 @@
 import { createReadStream, readFileSync, statSync } from "node:fs";
-import { createInterface } from "node:readline";
 import { basename } from "node:path";
 
 import type { Exchange } from "./types.js";
@@ -83,19 +82,24 @@ function clipText(text: string, max: number): string {
 	return text;
 }
 
+interface ParserState {
+	sessionId: string | null;
+	title: string | null;
+	cwd: string | null;
+	headerTimestamp: number;
+	pending: PendingExchange | null;
+	ordinal: number;
+	exchanges?: Exchange[];
+}
+
 function flushPending(
-	state: {
-		sessionId: string | null;
-		title: string | null;
-		cwd: string | null;
-		pending: PendingExchange | null;
-		exchanges: Exchange[];
-	},
+	state: ParserState,
 	filePath: string,
 	maxExchangeChars: number
-): void {
+): Exchange | null {
 	const pending = state.pending;
-	if (pending === null) return;
+	if (pending === null) return null;
+	let exchange: Exchange | null = null;
 	if (pending.userText.trim().length > 0) {
 		const userText = pending.userText;
 		const joined = pending.assistantText.join("\n\n");
@@ -103,7 +107,7 @@ function flushPending(
 			pending.assistantDropped > 0
 				? `${joined}\n\u2026[clipped ${pending.assistantDropped} chars]`
 				: joined;
-		state.exchanges.push({
+		exchange = {
 			sessionId: state.sessionId as string,
 			sourcePath: filePath,
 			title: state.title,
@@ -113,27 +117,21 @@ function flushPending(
 			userText,
 			assistantText,
 			toolNames: pending.toolNames,
-		});
+		};
+		state.exchanges?.push(exchange);
 	}
 	state.pending = null;
+	return exchange;
 }
 
 function processMessageEvent(
 	event: Record<string, unknown>,
-	state: {
-		sessionId: string | null;
-		title: string | null;
-		cwd: string | null;
-		headerTimestamp: number;
-		pending: PendingExchange | null;
-		ordinal: number;
-		exchanges: Exchange[];
-	},
+	state: ParserState,
 	filePath: string,
 	maxExchangeChars: number
-): void {
+): Exchange | null {
 	const payload = readMessagePayload(event);
-	if (payload === null) return;
+	if (payload === null) return null;
 	const parts = extractContentParts(payload.content);
 
 	if (payload.role === "user") {
@@ -143,9 +141,9 @@ function processMessageEvent(
 				userTexts.push(part.text);
 			}
 		}
-		if (userTexts.length === 0) return;
+		if (userTexts.length === 0) return null;
 
-		flushPending(state, filePath, maxExchangeChars);
+		const flushed = flushPending(state, filePath, maxExchangeChars);
 
 		let timestamp = state.headerTimestamp;
 		if (typeof payload.timestamp === "number") {
@@ -164,7 +162,7 @@ function processMessageEvent(
 			timestamp,
 			ordinal: state.ordinal++,
 		};
-		return;
+		return flushed;
 	}
 
 	if (payload.role === "assistant" && state.pending !== null) {
@@ -191,6 +189,7 @@ function processMessageEvent(
 			}
 		}
 	}
+	return null;
 }
 
 export function parseSessionFile(
@@ -291,10 +290,57 @@ export function parseSessionFile(
 	return state.exchanges;
 }
 
-export async function parseSessionFileStream(
+
+async function* readCappedJsonlLines(
+	filePath: string,
+	maxLineLength: number
+): AsyncGenerator<string> {
+	const stream = createReadStream(filePath, { encoding: "utf8" });
+	let line = "";
+	let skippingLongLine = false;
+
+	try {
+		for await (const chunk of stream) {
+			let offset = 0;
+			while (offset < chunk.length) {
+				const newline = chunk.indexOf("\n", offset);
+				const end = newline === -1 ? chunk.length : newline;
+				const segment = chunk.slice(offset, end);
+
+				if (!skippingLongLine && line.length + segment.length > maxLineLength) {
+					process.stderr.write(`Skipping line because it exceeds length limit of ${maxLineLength} chars.\n`);
+					line = "";
+					skippingLongLine = true;
+				}
+
+				if (!skippingLongLine) {
+					line += segment;
+				}
+
+				if (newline === -1) {
+					break;
+				}
+
+				if (!skippingLongLine) {
+					yield line.endsWith("\r") ? line.slice(0, -1) : line;
+				}
+				line = "";
+				skippingLongLine = false;
+				offset = newline + 1;
+			}
+		}
+
+		if (!skippingLongLine && line.length > 0) {
+			yield line.endsWith("\r") ? line.slice(0, -1) : line;
+		}
+	} finally {
+		stream.destroy();
+	}
+}
+export async function* iterateSessionFile(
 	filePath: string,
 	opts?: { maxBytes?: number; maxExchangeChars?: number }
-): Promise<Exchange[]> {
+): AsyncGenerator<Exchange> {
 	const size = statSync(filePath).size;
 	if (opts?.maxBytes !== undefined && size > opts.maxBytes) {
 		// Throws an error when file exceeds limit. The error message starts with 'session file too large'.
@@ -310,29 +356,18 @@ export async function parseSessionFileStream(
 	let headerTimestamp = timestampFromFilename(filePath);
 	let seenSession = false;
 
-	const state = {
-		sessionId: null as string | null,
-		title: null as string | null,
-		cwd: null as string | null,
+	const state: ParserState = {
+		sessionId: null,
+		title: null,
+		cwd: null,
 		headerTimestamp,
-		pending: null as PendingExchange | null,
+		pending: null,
 		ordinal: 0,
-		exchanges: [] as Exchange[],
 	};
 
-	const fileStream = createReadStream(filePath, { encoding: "utf8" });
-	const rl = createInterface({
-		input: fileStream,
-		crlfDelay: Infinity,
-	});
-
-	for await (const line of rl) {
+	for await (const line of readCappedJsonlLines(filePath, maxLineLength)) {
 		const trimmed = line.trim();
 		if (trimmed.length === 0) continue;
-		if (trimmed.length > maxLineLength) {
-			process.stderr.write(`Skipping line because it exceeds length limit of ${maxLineLength} chars.\n`);
-			continue;
-		}
 		let event: unknown;
 		try {
 			event = JSON.parse(trimmed);
@@ -360,10 +395,22 @@ export async function parseSessionFileStream(
 				state.title = null;
 				state.cwd = null;
 			}
-			processMessageEvent(event, state, filePath, maxExchangeChars);
+			const flushed = processMessageEvent(event, state, filePath, maxExchangeChars);
+			if (flushed !== null) yield flushed;
 		}
 	}
 
-	flushPending(state, filePath, maxExchangeChars);
-	return state.exchanges;
+	const final = flushPending(state, filePath, maxExchangeChars);
+	if (final !== null) yield final;
+}
+
+export async function parseSessionFileStream(
+	filePath: string,
+	opts?: { maxBytes?: number; maxExchangeChars?: number }
+): Promise<Exchange[]> {
+	const exchanges: Exchange[] = [];
+	for await (const exchange of iterateSessionFile(filePath, opts)) {
+		exchanges.push(exchange);
+	}
+	return exchanges;
 }

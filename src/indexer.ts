@@ -8,10 +8,9 @@ import {
   insertExchange,
   openDb,
   runInTransaction,
-  type InsertableExchange,
 } from "./db.js";
 import { embedExchange, initEmbeddings } from "./embeddings.js";
-import { isSessionFile, parseSessionFile, parseSessionFileStream } from "./parser.js";
+import { isSessionFile, iterateSessionFile, parseSessionFile } from "./parser.js";
 import { DEFAULT_SESSIONS_DIR } from "./types.js";
 
 export function findSessionFiles(root: string = DEFAULT_SESSIONS_DIR): string[] {
@@ -136,11 +135,49 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         continue;
       }
 
-      let exchanges;
+      let insertedForFile = 0;
       try {
-        exchanges = await parseSessionFileStream(file, {
+        // Consume exchanges incrementally: do not materialize a per-session Exchange[]
+        // before embedding/upserting. The file mtime is marked only after the iterator
+        // completes, so parse/embed failures never make a partial file look current.
+        for await (const ex of iterateSessionFile(file, {
           maxBytes: opts.maxBytes ?? 200 * 1024 * 1024,
-        });
+        })) {
+          const toolNamesJson = JSON.stringify(ex.toolNames);
+          const existing = selectContent.get(ex.sessionId, ex.ordinal) as
+            | {
+                source_path: string;
+                title: string | null;
+                cwd: string | null;
+                timestamp: number;
+                user_text: string;
+                assistant_text: string | null;
+                tool_names: string | null;
+              }
+            | undefined;
+          if (
+            existing !== undefined &&
+            existing.source_path === ex.sourcePath &&
+            existing.title === ex.title &&
+            existing.cwd === ex.cwd &&
+            existing.timestamp === ex.timestamp &&
+            existing.user_text === ex.userText &&
+            (existing.assistant_text ?? "") === ex.assistantText &&
+            (existing.tool_names ?? "[]") === toolNamesJson
+          ) {
+            continue;
+          }
+
+          const embedding = await embedExchange(
+            ex.userText,
+            ex.assistantText,
+            ex.toolNames,
+          );
+          const inserted = runInTransaction(db, () =>
+            insertExchange(db, { ...ex, embedding }) ? 1 : 0,
+          );
+          insertedForFile += inserted;
+        }
       } catch (err: any) {
         if (
           err &&
@@ -156,52 +193,8 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         throw err;
       }
 
-      // Compute embeddings first (async); better-sqlite3 transactions cannot span await.
-      // Embedding is the costly step, so skip exchanges whose stored row already
-      // matches the parsed values (mirror insertExchange's unchanged comparison).
-      const insertables: InsertableExchange[] = [];
-      for (const ex of exchanges) {
-        const toolNamesJson = JSON.stringify(ex.toolNames);
-        const existing = selectContent.get(ex.sessionId, ex.ordinal) as
-          | {
-              source_path: string;
-              title: string | null;
-              cwd: string | null;
-              timestamp: number;
-              user_text: string;
-              assistant_text: string | null;
-              tool_names: string | null;
-            }
-          | undefined;
-        if (
-          existing !== undefined &&
-          existing.source_path === ex.sourcePath &&
-          existing.title === ex.title &&
-          existing.cwd === ex.cwd &&
-          existing.timestamp === ex.timestamp &&
-          existing.user_text === ex.userText &&
-          (existing.assistant_text ?? "") === ex.assistantText &&
-          (existing.tool_names ?? "[]") === toolNamesJson
-        ) {
-          continue;
-        }
-
-        const embedding = await embedExchange(
-          ex.userText,
-          ex.assistantText,
-          ex.toolNames,
-        );
-        insertables.push({ ...ex, embedding });
-      }
-
-      // Synchronous inserts only inside the transaction.
-      const insertedForFile = runInTransaction(db, () => {
-        let inserted = 0;
-        for (const ins of insertables) {
-          if (insertExchange(db, ins)) inserted++;
-        }
+      runInTransaction(db, () => {
         upsertMtime.run(file, mtimeMs, Date.now());
-        return inserted;
       });
 
       filesProcessed++;
