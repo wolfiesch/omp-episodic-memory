@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-26
+
+### Added
+
+- `bench` command (OMP-MemBench): runs the recall and extraction-quality
+  evals together against a two-tier threshold model — CI-blocking **gates**
+  (Recall@5, abstention false-positive rate, p95 latency, extraction
+  precision, duplicate rate) and aspirational **targets** that are reported
+  but never fail the build. Exits non-zero on any gate failure; CI runs it on
+  every push.
+- `label-scaffold` command: emits a `labels.jsonl` template from real-session
+  extraction candidates (pre-filled `correct: true`, with `title`/
+  `matchedText`/`rule` review context) to grow the extraction gold set.
+- Provenance release workflow (`.github/workflows/release.yml`): a version tag
+  triggers `npm publish --provenance --access public` via OIDC `id-token`.
+- README CI + npm version badges; `publishConfig` with provenance enabled.
+
 ## [1.0.2] - 2026-06-25
 
 ### Security
@@ -75,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI (`omp-episodic`) with `index`, `search`, and `stats` commands.
 - MCP stdio server exposing read-only `search` and `read` tools.
 
+[1.1.0]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v1.1.0
 [1.0.2]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v1.0.2
 [1.0.1]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v1.0.1
 [1.0.0]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/v1.0.0
