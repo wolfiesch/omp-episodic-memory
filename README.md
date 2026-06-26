@@ -8,7 +8,7 @@ Index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts, t
 
 [![CI](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg)](https://www.npmjs.com/package/omp-episodic-memory)
-[![Install with npx](https://img.shields.io/static/v1?label=install&message=npx%20-y&color=6366f1)](#install)
+[![Install with npx](https://img.shields.io/static/v1?label=install&message=npx%20-p&color=6366f1)](#install)
 [![Node.js](https://img.shields.io/node/v/omp-episodic-memory.svg)](https://nodejs.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
@@ -73,8 +73,8 @@ npm install -g omp-episodic-memory   # global CLI: omp-episodic
 Or run without installing:
 
 ```sh
-npx -y omp-episodic-memory index
-npx -y omp-episodic-memory search "family tree research"
+npx -y -p omp-episodic-memory omp-episodic index
+npx -y -p omp-episodic-memory omp-episodic search "family tree research"
 ```
 
 ## Quick start
