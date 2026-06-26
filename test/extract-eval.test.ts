@@ -40,7 +40,7 @@ test("runExtractEval with the relocated ffffffff session handles specific assert
   });
   assert.equal(report.metrics.totalCandidates, 4);
   assert.equal(report.metrics.labeledCandidates, 4);
-  assert.equal(report.metrics.precision, 1);
+  assert.equal(report.metrics.precision, 0.75);
   assert.equal(report.unlabeled.length, 0);
 });
 

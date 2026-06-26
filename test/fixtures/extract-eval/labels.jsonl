@@ -34,4 +34,4 @@
 {"sessionId":"ffffffff-0000-7000-8000-000000000006","ordinal":3,"type":"runbook","titleSubstring":"runbook for publishing","correct":true,"title":"Runbook for publishing: 1.","matchedText":"Runbook for publishing: 1.","rule":"runbook"}
 {"sessionId":"ffffffff-0000-7000-8000-000000000006","ordinal":4,"type":"runbook","titleSubstring":"1.","correct":false,"title":"1.","matchedText":"1.","rule":"runbook"}
 {"sessionId":"ffffffff-0000-7000-8000-000000000006","ordinal":5,"type":"gotcha","titleSubstring":"avoid it","correct":false,"title":"Avoid it.","matchedText":"Avoid it.","rule":"gotcha"}
-{"sessionId":"ffffffff-0000-7000-8000-000000000006","ordinal":1,"type":"decision","titleSubstring":"we decided to use this library","correct":true,"title":"We decided to use this library.","matchedText":"We decided to use this library.","rule":"decision"}
+{"sessionId":"ffffffff-0000-7000-8000-000000000006","ordinal":1,"type":"decision","titleSubstring":"we decided to use this library","correct":false,"title":"We decided to use this library.","matchedText":"We decided to use this library.","rule":"decision"}
