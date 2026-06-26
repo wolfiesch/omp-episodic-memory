@@ -78,4 +78,15 @@ Steps:
 3. `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. Actions publishes the package with a verified provenance attestation.
 
-One-time setup: add `NPM_TOKEN` (a granular automation token) as a repo secret.
+One-time setup: add a publish-capable npm token as the `NPM_TOKEN` repo secret.
+The account enforces 2FA on publish, so the token MUST be one that bypasses the
+interactive OTP — use **either**:
+- a **Classic Automation token** (npmjs.com → Access Tokens → Generate New Token
+  → Classic → *Automation*), which bypasses 2FA and can create new packages; or
+- a **Granular Access token** with **Read and write** packages permission. Scope
+  it to all packages for a *first-ever* publish (a package-scoped granular token
+  cannot create a name that does not yet exist on npm), then narrow it to
+  `omp-episodic-memory` for subsequent releases.
+
+Do NOT use a Classic *Read-only* or *Publish*-with-2FA-required token — both fail
+the publish with `403 ... requires two-factor authentication`.
