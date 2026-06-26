@@ -50,7 +50,24 @@ function isTransientGotcha(sentence: string): boolean {
 
 function isNoisyGotcha(sentence: string): boolean {
   const normalized = sentence.replace(/\s+/gu, " ").trim();
-  return /^(?:\||#+\s|non-goals?:|changed:|verified:|note:)/i.test(normalized) || /^[“"]?I[’']?ll\b/i.test(normalized);
+  if (/^(?:\||#+\s|non-goals?:|changed:|verified:|note:)/i.test(normalized)) {
+    return true;
+  }
+  if (/^[“"]?I[’']?ll\b/i.test(normalized)) {
+    return true;
+  }
+  if (normalized.endsWith("?")) {
+    return true;
+  }
+  if (normalized.length < 20) {
+    return true;
+  }
+  const narrationRe = /^[“"]?(?:I|we)\s+(?:will|now|then|just|can|could|should)\b/i;
+  const durableCueRe = /\b(?:avoid|never|do\s+not|fails?|failed|error)\b/i;
+  if (narrationRe.test(normalized) && !durableCueRe.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 
 function isNoisyDecision(sentence: string): boolean {
@@ -60,7 +77,16 @@ function isNoisyDecision(sentence: string): boolean {
 
 function isNoisyRunbookLead(sentence: string): boolean {
   const normalized = sentence.replace(/\s+/gu, " ").trim();
-  return /^(?:timestamp:|done\.?$|completed\b|read-only investigation complete\.?$|pr opened:)/i.test(normalized);
+  if (/^(?:timestamp:|done\.?$|completed\b|read-only investigation complete\.?$|pr opened:)/i.test(normalized)) {
+    return true;
+  }
+  if (/^(?:here(?:['’]s| is)|the following|below)\b/i.test(normalized)) {
+    return true;
+  }
+  if (/^\d+\.?$/i.test(normalized)) {
+    return true;
+  }
+  return false;
 }
 
 function hasRunbookCue(text: string): boolean {

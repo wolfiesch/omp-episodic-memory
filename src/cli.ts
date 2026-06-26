@@ -33,6 +33,16 @@ import {
   type BlockKind,
 } from "./blocks.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
+import { existsSync } from "node:fs";
+import {
+  installDaemon,
+  uninstallDaemon,
+  defaultDaemonConfig,
+  detectPlatform,
+  launchdPlistPath,
+  systemdUnitPath,
+  type DaemonConfig,
+} from "./daemon.js";
 import { formatToolEventSummary } from "./tool-events.js";
 import {
   renderInboxPanel,
@@ -632,6 +642,97 @@ async function cmdDoctor(flags: Map<string, string>): Promise<void> {
   if (checks.some((check) => check.status === "fail")) process.exitCode = 1;
 }
 
+function cmdDaemon(positional: string[], flags: Map<string, string>): void {
+  const sub = positional[0] ?? "status";
+  const isJson = flags.get("json") === "true";
+
+  const platform = detectPlatform();
+  if (platform === "unsupported") {
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ error: "Unsupported platform" }) + "\n");
+    } else {
+      process.stderr.write("Error: Unsupported platform for daemon management.\n");
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const overrides: Partial<DaemonConfig> = {};
+  const db = flags.get("db");
+  if (db !== undefined) {
+    overrides.dbPath = db;
+  }
+  const sessions = flags.get("sessions");
+  if (sessions !== undefined) {
+    overrides.sessionsDir = sessions;
+  }
+  const interval = flags.get("interval");
+  if (interval !== undefined) {
+    const parsed = parseInt(interval, 10);
+    if (!isNaN(parsed)) {
+      overrides.intervalSec = parsed;
+    }
+  }
+
+  const config = defaultDaemonConfig(overrides);
+
+  if (sub === "install") {
+    try {
+      const res = installDaemon(config);
+      if (isJson) {
+        process.stdout.write(JSON.stringify(res) + "\n");
+      } else {
+        process.stderr.write(`Daemon installed for platform: ${res.platform}\n`);
+        process.stderr.write(`Service file created at: ${res.path}\n`);
+        process.stderr.write(`To activate, run:\n  ${res.activateHint}\n`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isJson) {
+        process.stdout.write(JSON.stringify({ error: msg }) + "\n");
+      } else {
+        process.stderr.write(`Error: ${msg}\n`);
+      }
+      process.exitCode = 1;
+    }
+  } else if (sub === "uninstall") {
+    try {
+      const res = uninstallDaemon({ label: config.label });
+      if (isJson) {
+        process.stdout.write(JSON.stringify(res) + "\n");
+      } else {
+        process.stderr.write(`Daemon uninstalled for platform: ${res.platform}\n`);
+        process.stderr.write(`Service file removed: ${res.removed} (path: ${res.path})\n`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isJson) {
+        process.stdout.write(JSON.stringify({ error: msg }) + "\n");
+      } else {
+        process.stderr.write(`Error: ${msg}\n`);
+      }
+      process.exitCode = 1;
+    }
+  } else if (sub === "status") {
+    const daemonPath = platform === "launchd" ? launchdPlistPath(config.label) : systemdUnitPath(config.label);
+    const exists = existsSync(daemonPath);
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ platform, exists, path: daemonPath }) + "\n");
+    } else {
+      process.stderr.write(`Platform: ${platform}\n`);
+      process.stderr.write(`Service file exists: ${exists} (path: ${daemonPath})\n`);
+    }
+  } else {
+    const msg = `Unknown daemon command: ${sub}`;
+    if (isJson) {
+      process.stdout.write(JSON.stringify({ error: msg }) + "\n");
+    } else {
+      process.stderr.write(`Error: ${msg}\n`);
+    }
+    process.exitCode = 1;
+  }
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseFlags(rest);
@@ -641,6 +742,9 @@ async function main(): Promise<void> {
       break;
     case "watch":
       await cmdWatch(flags);
+      break;
+    case "daemon":
+      cmdDaemon(positional, flags);
       break;
     case "search":
       await cmdSearch(positional, flags);
@@ -699,6 +803,7 @@ async function main(): Promise<void> {
           "Commands:\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
           "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
+          "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--json]   Manage the background indexing service\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--ui] [--plain] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--ui] [--plain] [--json]\n" +
           "  stats    [--db PATH] [--ui] [--plain]              Show index statistics\n" +

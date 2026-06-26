@@ -11,6 +11,7 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SESSIONS_DIR = join(HERE, "fixtures", "sessions");
 const LABELS_PATH = join(HERE, "fixtures", "extract-eval", "labels.jsonl");
+const EXTRACT_SESSIONS_DIR = join(HERE, "fixtures", "extract-eval", "sessions");
 
 test("runExtractEval with no labels reports candidates and a valid duplicate rate", () => {
   const report = runExtractEval({ sessionsDir: SESSIONS_DIR });
@@ -30,6 +31,17 @@ test("runExtractEval with the labels fixture scores precision and per-type break
     Object.keys(report.metrics.byType).length >= 1,
     "expected byType populated for >=1 type",
   );
+});
+
+test("runExtractEval with the relocated ffffffff session handles specific assertions", () => {
+  const report = runExtractEval({
+    sessionsDir: EXTRACT_SESSIONS_DIR,
+    labelsPath: LABELS_PATH,
+  });
+  assert.equal(report.metrics.totalCandidates, 4);
+  assert.equal(report.metrics.labeledCandidates, 4);
+  assert.equal(report.metrics.precision, 1);
+  assert.equal(report.unlabeled.length, 0);
 });
 
 test("formatExtractEvalReport returns a non-empty string mentioning precision", () => {

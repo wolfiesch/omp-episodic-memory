@@ -124,6 +124,47 @@ test("extractFromExchanges keeps procedural runbooks with explicit steps", () =>
   assert.equal(records.some((record) => record.type === "runbook"), true);
 });
 
+test("extractFromExchanges ignores question-form and too-short gotchas", () => {
+  const qGotcha = extractFromExchanges([
+    exchangeWithAssistant("Why avoid building a dashboard first?"),
+  ]);
+  assert.equal(qGotcha.some((r) => r.type === "gotcha"), false);
+
+  const shortGotcha = extractFromExchanges([
+    exchangeWithAssistant("Avoid it."),
+  ]);
+  assert.equal(shortGotcha.some((r) => r.type === "gotcha"), false);
+});
+
+test("extractFromExchanges ignores first-person narration gotchas lacking durable cues, but keeps them with cues", () => {
+  const narrationNoCue = extractFromExchanges([
+    exchangeWithAssistant("I will now write a test so we don't regress."),
+  ]);
+  assert.equal(narrationNoCue.some((r) => r.type === "gotcha"), false);
+
+  const narrationWithCue = extractFromExchanges([
+    exchangeWithAssistant("I will now make sure to avoid editing the files."),
+  ]);
+  assert.equal(narrationWithCue.some((r) => r.type === "gotcha"), true);
+});
+
+test("extractFromExchanges ignores noisy runbook leads and empty step leads", () => {
+  const heresLead = extractFromExchanges([
+    exchangeWithAssistant("Here's how to publish: 1. Compile. 2. Publish."),
+  ]);
+  assert.equal(heresLead.some((r) => r.type === "runbook"), false);
+
+  const belowLead = extractFromExchanges([
+    exchangeWithAssistant("Below are the steps: 1. Compile. 2. Publish."),
+  ]);
+  assert.equal(belowLead.some((r) => r.type === "runbook"), false);
+
+  const numberLead = extractFromExchanges([
+    exchangeWithAssistant("1. Compile. 2. Publish."),
+  ]);
+  assert.equal(numberLead.some((r) => r.type === "runbook"), false);
+});
+
 let dbPath: string;
 let db: Database.Database;
 

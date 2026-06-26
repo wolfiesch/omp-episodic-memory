@@ -111,6 +111,14 @@ omp-episodic stats
 
 The default index path is `${XDG_DATA_HOME:-~/.local/share}/omp-episodic-memory/index.db`. Override it with `OMP_EPISODIC_DB` or `--db PATH`.
 
+For hands-off indexing, install the background service so the watcher runs automatically:
+
+```sh
+omp-episodic daemon install    # write a launchd/systemd unit, then print the activate command
+omp-episodic daemon status     # show platform + whether the service file exists
+omp-episodic daemon uninstall  # remove the service file
+```
+
 ## How it works
 
 | Stage | What happens |
@@ -150,6 +158,7 @@ omp-episodic recall "fix flaky vector search" --ui # OMP-styled TTY panel
 | `eval` | Run the recall eval harness over a question/session fixture set. |
 | `context` | Show pinned project-context blocks plus recent approved decisions/gotchas/runbooks. |
 | `blocks` | Manage pinned project-context blocks (`list`, `set <kind>`, `rm <id>`). |
+| `daemon` | Install, uninstall, or check the background indexing service (launchd on macOS, systemd user service on Linux). |
 
 Common flags: `--mode both|vector|text`, `--limit N`, `--after YYYY-MM-DD`, `--before YYYY-MM-DD`, `--project P`, `--json`, `--ui`, `--plain`, `--db PATH`, `--sessions DIR`, `--max N`.
 
@@ -190,7 +199,7 @@ Current baseline on the bundled synthetic fixtures (text mode):
 | Recall@5 | 100% |
 | Abstention false-positive rate | 0% |
 | p95 latency | < 500ms |
-| Extraction precision | 92.6% |
+| Extraction precision | 96.2% |
 | Unlabeled extraction candidates | 0 |
 | Duplicate rate | 0% |
 
