@@ -27,6 +27,11 @@ export async function initEmbeddings(): Promise<void> {
     const { pipeline, env } = await import("@xenova/transformers");
     // Allow fetching the model on first run if it is not already cached.
     env.allowRemoteModels = true;
+    // Honor TRANSFORMERS_CACHE so the cache location is configurable and matches
+    // what `doctor` probes; absent the var, Transformers.js uses its package default.
+    if (process.env.TRANSFORMERS_CACHE) {
+      env.cacheDir = process.env.TRANSFORMERS_CACHE;
+    }
     console.error("Loading embedding model...");
     return pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
   })();
