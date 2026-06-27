@@ -15,13 +15,26 @@ import { DEFAULT_SESSIONS_DIR } from "./types.js";
 import { serializeToolEvents, toolEventsIndexText } from "./tool-events.js";
 
 function globToRegExp(pattern: string): RegExp {
+  let glob = pattern;
+  // A leading "./" anchors to the root and is redundant for relative paths.
+  if (glob.startsWith("./")) glob = glob.slice(2);
+  // A trailing slash denotes a directory: exclude everything beneath it.
+  if (glob.endsWith("/")) glob += "**";
   let source = "^";
-  for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i];
-    const next = pattern[i + 1];
+  for (let i = 0; i < glob.length; i++) {
+    const char = glob[i];
+    const next = glob[i + 1];
     if (char === "*" && next === "*") {
-      source += ".*";
-      i++;
+      // A "**/" segment matches any number of directories, including zero, so
+      // both `a/**/c` -> `a/c` and a leading `**/c` -> `c` match. A bare trailing
+      // "**" matches anything that follows.
+      if (glob[i + 2] === "/") {
+        source += "(?:.*/)?";
+        i += 2;
+      } else {
+        source += ".*";
+        i++;
+      }
     } else if (char === "*") {
       source += "[^/]*";
     } else {
