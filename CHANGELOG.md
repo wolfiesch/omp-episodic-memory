@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `bench` command (OMP-MemBench): runs the recall and extraction-quality
-  evals together against a two-tier threshold model — CI-blocking **gates**
+  evals together against a two-tier threshold model - CI-blocking **gates**
   (Recall@5, abstention false-positive rate, p95 latency, extraction
   precision, duplicate rate) and aspirational **targets** that are reported
   but never fail the build. Exits non-zero on any gate failure; CI runs it on
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `bin` paths no longer use a leading `./`, which npm's bin-path validator
-  rejected — silently dropping both `omp-episodic` and `omp-episodic-mcp`
+  rejected - silently dropping both `omp-episodic` and `omp-episodic-mcp`
   binaries from the published package. First registry-publishable release.
 
 ## [1.0.0] - 2026-06-25

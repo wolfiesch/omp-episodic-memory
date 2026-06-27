@@ -298,7 +298,7 @@ export interface WatchOptions extends IndexOptions {
 /**
  * Keep the index fresh during active OMP work via periodic background
  * re-indexing. Reuses the incremental `indexAll` (which skips unchanged files
- * by mtime). Polling-based — no fragile fs.watch dependency.
+ * by mtime). Polling-based - no fragile fs.watch dependency.
  *
  * Each cycle runs the incremental `indexAll` with `minStableMs` set from
  * `stableMs` (default 2000), so files modified within that window are treated

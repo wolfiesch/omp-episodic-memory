@@ -29,7 +29,7 @@ export type EvalCategory =
   | "contradiction"
   | "abstain";
 
-/** One expected episode, keyed on stable (sessionId, ordinal) — not rowid. */
+/** One expected episode, keyed on stable (sessionId, ordinal) - not rowid. */
 export interface ExpectedEpisode {
   sessionId: string;
   ordinal: number;

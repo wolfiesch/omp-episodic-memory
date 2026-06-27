@@ -180,7 +180,7 @@ export interface NewEdge {
 }
 
 /**
- * Insert an edge. Idempotent on (src, type, dst, source) — re-inserting the
+ * Insert an edge. Idempotent on (src, type, dst, source) - re-inserting the
  * same provenance-scoped edge updates its validity/confidence in place.
  * Returns the edge id.
  */

@@ -5,11 +5,11 @@ Checklist for cutting a release of `omp-episodic-memory`. Versions follow
 
 ## Pre-flight (clean tree)
 
-1. `bun run check` — type-check passes.
-2. `bun run test` — full suite green.
+1. `bun run check` - type-check passes.
+2. `bun run test` - full suite green.
 3. `bun run eval -- --questions test/fixtures/eval/questions.jsonl --sessions test/fixtures/sessions --mode text`
-   — recall baseline holds (Recall@5 100%, abstention 100%, FP 0% on fixtures).
-4. `git status` — working tree clean; everything intended is committed.
+   - recall baseline holds (Recall@5 100%, abstention 100%, FP 0% on fixtures).
+4. `git status` - working tree clean; everything intended is committed.
 
 ## Version + changelog
 
@@ -17,7 +17,7 @@ Checklist for cutting a release of `omp-episodic-memory`. Versions follow
 6. Add a dated section to `CHANGELOG.md` under the new version, plus its
    `[x.y.z]: https://github.com/wolfiesch/omp-episodic-memory/releases/tag/vx.y.z`
    link reference at the bottom.
-7. Commit: `git commit -m "release: vX.Y.Z — <summary>"`.
+7. Commit: `git commit -m "release: vX.Y.Z - <summary>"`.
 
 ## Package verification (catches publish-time surprises)
 
@@ -34,22 +34,22 @@ Checklist for cutting a release of `omp-episodic-memory`. Versions follow
 
 ## Tag + GitHub release
 
-12. `git tag -a vX.Y.Z -m "vX.Y.Z — <summary>"`.
+12. `git tag -a vX.Y.Z -m "vX.Y.Z - <summary>"`.
 13. `git push origin main && git push origin vX.Y.Z`.
-14. `gh release create vX.Y.Z --title "vX.Y.Z — <title>" --notes-file <notes.md>`
+14. `gh release create vX.Y.Z --title "vX.Y.Z - <title>" --notes-file <notes.md>`
     (notes derived from the CHANGELOG section).
 
 ## npm publish
 
-15. `npm whoami` — if `ENEEDAUTH`, run `npm login` (interactive, browser OTP).
-16. `npm publish --access public` — publishes the **current** `package.json`
+15. `npm whoami` - if `ENEEDAUTH`, run `npm login` (interactive, browser OTP).
+16. `npm publish --access public` - publishes the **current** `package.json`
     version. If a security/bin fix changed the tree after tagging, re-tag a new
     patch rather than publishing a tree that diverges from the released tag.
 
 ## Post-publish smoke test
 
-17. `npx -y -p omp-episodic-memory omp-episodic --help` — CLI bin resolves.
-18. `npx -y -p omp-episodic-memory omp-episodic-mcp` — MCP server boots and
+17. `npx -y -p omp-episodic-memory omp-episodic --help` - CLI bin resolves.
+18. `npx -y -p omp-episodic-memory omp-episodic-mcp` - MCP server boots and
     prints its stdio banner to stderr (Ctrl-C to stop).
 19. Confirm `npm view omp-episodic-memory version` matches the tag.
 
@@ -80,7 +80,7 @@ Steps:
 
 One-time setup: add a publish-capable npm token as the `NPM_TOKEN` repo secret.
 The account enforces 2FA on publish, so the token MUST be one that bypasses the
-interactive OTP — use **either**:
+interactive OTP - use **either**:
 - a **Classic Automation token** (npmjs.com → Access Tokens → Generate New Token
   → Classic → *Automation*), which bypasses 2FA and can create new packages; or
 - a **Granular Access token** with **Read and write** packages permission. Scope
@@ -88,5 +88,5 @@ interactive OTP — use **either**:
   cannot create a name that does not yet exist on npm), then narrow it to
   `omp-episodic-memory` for subsequent releases.
 
-Do NOT use a Classic *Read-only* or *Publish*-with-2FA-required token — both fail
+Do NOT use a Classic *Read-only* or *Publish*-with-2FA-required token - both fail
 the publish with `403 ... requires two-factor authentication`.

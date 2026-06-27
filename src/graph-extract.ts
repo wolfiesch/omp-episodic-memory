@@ -1,6 +1,6 @@
 // Pure, network-free graph extraction: populate the temporal project graph
 // from parsed episodes and existing derived-memory records. Deterministic
-// heuristics only — no embeddings, no I/O beyond reading session files + DB.
+// heuristics only - no embeddings, no I/O beyond reading session files + DB.
 import { openDb, runInTransaction } from "./db.js";
 import {
   getGraphStats,

@@ -55,6 +55,8 @@ OMP Hindsight and Mnemopi are curated operational memory for the agent's working
 | Avoid writing to OMP state | No. Native memory is OMP state. | Yes. The index is separate and read-only toward OMP. |
 | Debug stale/contradictory memory | Limited. You see the current distilled view. | Yes. Compare decisions, supersession, and source evidence. |
 
+### Landscape & alternatives
+
 | Project | Lane | Relationship |
 | --- | --- | --- |
 | Native OMP memory | Curated working memory for agents. | Complement: this tool supplies transcript evidence before you update native memory. |

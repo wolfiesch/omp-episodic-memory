@@ -2,19 +2,19 @@
 
 Each session is one `.jsonl` file under `~/.omp/agent/sessions/<project-dir>/...`.
 Files: `<timestamp>_<sessionId>.jsonl`. Subdirectories named after a session id hold
-subagent transcripts (same line format) — index them too; their `sessionId` comes
+subagent transcripts (same line format) - index them too; their `sessionId` comes
 from their own header line if present, else falls back to the JSONL filename stem.
 
 ## Line types (field `type`)
 
-- `session` — FIRST line, the header. Fields we use:
-  - `id` (string) — session id
-  - `timestamp` (ISO string) — session start
-  - `cwd` (string) — working dir
-  - `title` (string, optional) — human title
+- `session` - FIRST line, the header. Fields we use:
+  - `id` (string) - session id
+  - `timestamp` (ISO string) - session start
+  - `cwd` (string) - working dir
+  - `title` (string, optional) - human title
 - `model_change`, `thinking_level_change`, `mcp_tool_selection`, `compaction`,
-  `custom_message`, `bashExecution` — IGNORE for indexing.
-- `message` — the conversational events. Shape:
+  `custom_message`, `bashExecution` - IGNORE for indexing.
+- `message` - the conversational events. Shape:
   ```json
   {
     "type": "message",
@@ -31,10 +31,10 @@ from their own header line if present, else falls back to the JSONL filename ste
 
 ## ContentPart shapes (inside `message.content[]`)
 
-- `{ "type": "text", "text": "..." }` — primary text. NOTE: assistant text parts
+- `{ "type": "text", "text": "..." }` - primary text. NOTE: assistant text parts
   can have `text: ""` (phase markers). Skip empty strings.
-- `{ "type": "thinking", ... }` — IGNORE (do not index reasoning).
-- `{ "type": "toolCall", "name": "read", "arguments": {...}, "id": "..." }` —
+- `{ "type": "thinking", ... }` - IGNORE (do not index reasoning).
+- `{ "type": "toolCall", "name": "read", "arguments": {...}, "id": "..." }` -
   collect distinct `name`s into `toolNames` and append a `toolEvents` entry with
   `callId`, `toolName`, normalized `arguments`, derived `command`, and derived
   top-level `filePaths`.
