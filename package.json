@@ -26,6 +26,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "setup": "npm run build && node dist/cli.js setup",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",

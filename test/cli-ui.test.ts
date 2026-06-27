@@ -48,3 +48,9 @@ test("piped CLI output stays plain even when UI is requested", async () => {
     cleanupDb(dbPath);
   }
 });
+
+test("help advertises the setup command", async () => {
+  const { stderr } = await runCli([]);
+  assert.match(stderr, /setup\s+\[--db PATH\]/);
+});
+

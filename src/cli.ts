@@ -34,6 +34,7 @@ import {
 } from "./blocks.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
 import { existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import {
   installDaemon,
   uninstallDaemon,
@@ -742,11 +743,129 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
     process.exitCode = 1;
   }
 }
+async function cmdSetup(flags: Map<string, string>): Promise<void> {
+  const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const sessionsDir = flags.get("sessions");
+
+  process.stdout.write("🚀 Starting omp-episodic-memory setup...\n");
+
+  // 1. Run indexing
+  process.stdout.write("1. Indexing OMP session transcripts...\n");
+  try {
+    const maxFiles = flags.has("max") ? Number(flags.get("max")) : undefined;
+    const maxBytes =
+      flags.get("no-max-bytes") === "true"
+        ? Number.MAX_SAFE_INTEGER
+        : flags.has("max-bytes")
+          ? Number(flags.get("max-bytes"))
+          : undefined;
+    const result = await indexAll({
+      dbPath,
+      sessionsDir,
+      maxFiles,
+      maxBytes,
+      force: flags.get("force") === "true",
+      onProgress: (p) => {
+        if (p.fileIndex % 25 === 0 || p.fileIndex === p.totalFiles - 1) {
+          process.stdout.write(`   [${p.fileIndex + 1}/${p.totalFiles}] ${p.exchanges} changed  ${p.file.split("/").pop()}\n`);
+        }
+      },
+    });
+    process.stdout.write(`   Done indexing: ${result.filesProcessed} files processed, ${result.exchangesUpserted} exchanges upserted.\n`);
+  } catch (err) {
+    process.stderr.write(`❌ Indexing failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // 2. Install background indexing daemon
+  const platform = detectPlatform();
+  if (platform === "unsupported") {
+    process.stdout.write("⚠️ Background daemon is unsupported on this platform. Falling back to foreground watcher...\n");
+    await cmdWatch(flags);
+    return;
+  }
+
+  process.stdout.write(`2. Installing background indexing daemon for ${platform}...\n`);
+  const overrides: Partial<DaemonConfig> = {};
+  if (dbPath !== undefined) overrides.dbPath = dbPath;
+  if (sessionsDir !== undefined) overrides.sessionsDir = sessionsDir;
+  const interval = flags.get("interval");
+  if (interval !== undefined) {
+    const parsed = parseInt(interval, 10);
+    if (!isNaN(parsed)) overrides.intervalSec = parsed;
+  }
+  const cliPath = flags.get("cli-path");
+  if (cliPath !== undefined) overrides.cliPath = cliPath;
+
+  const config = defaultDaemonConfig(overrides);
+  if (/[\\/](?:_npx|\.npm[\\/]_npx|npm-cache)[\\/]/.test(config.cliPath)) {
+    process.stdout.write(
+      "⚠️ Warning: setup points at a temporary npx/cache path that may be cleaned up.\n" +
+        "  Install globally (npm install -g omp-episodic-memory) or pass --cli-path PATH to a stable CLI location.\n"
+    );
+  }
+
+  try {
+    const res = installDaemon(config);
+    process.stdout.write(`   Service file created at: ${res.path}\n`);
+
+    // Auto-activate daemon
+    process.stdout.write("   Activating the daemon service...\n");
+    if (platform === "launchd") {
+      try {
+        execSync(`launchctl unload -w "${res.path}"`, { stdio: "ignore" });
+      } catch {}
+      execSync(`launchctl load -w "${res.path}"`);
+    } else if (platform === "systemd") {
+      execSync("systemctl --user daemon-reload");
+      execSync(`systemctl --user enable --now "${config.label}"`);
+    }
+    process.stdout.write("   ✓ Daemon service successfully loaded and started.\n");
+  } catch (err) {
+    process.stderr.write(`⚠️ Failed to install or start daemon: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stdout.write("   Falling back to foreground watch mode...\n");
+    await cmdWatch(flags);
+    return;
+  }
+
+  // 3. Run doctor checks to verify setup
+  process.stdout.write("3. Running diagnostic checks...\n");
+  const checks = await runDoctor({
+    dbPath,
+    sessionsDir,
+    probeModel: true,
+  });
+  let hasFail = false;
+  for (const check of checks) {
+    process.stdout.write(`   ${doctorSymbol(check.status)} ${check.name} - ${check.detail}\n`);
+    if (check.status === "fail") {
+      hasFail = true;
+    }
+  }
+
+  if (hasFail) {
+    process.stderr.write("\n❌ Setup finished with failures. Please fix the items marked with ✗ above.\n");
+    process.exitCode = 1;
+    return;
+  }
+
+  process.stdout.write(
+    "\n🎉 Setup complete! omp-episodic-memory is fully configured.\n\n" +
+      "To check daemon logs:\n" +
+      `  tail -f ~/.local/state/omp-episodic/daemon.log\n\n` +
+      "To query forensic memory:\n" +
+      `  omp-episodic recall "Why did we choose sqlite-vec?"\n\n`
+  );
+}
 
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   const { positional, flags } = parseFlags(rest);
   switch (cmd) {
+    case "setup":
+      await cmdSetup(flags);
+      break;
     case "index":
       await cmdIndex(flags);
       break;
@@ -811,6 +930,7 @@ async function main(): Promise<void> {
       process.stderr.write(
         "omp-episodic <command>\n\n" +
           "Commands:\n" +
+          "  setup    [--db PATH] [--sessions DIR] [--max N] [--force] [--interval S] [--cli-path PATH]   One-command setup: build, index, and load daemon\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
           "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
           "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--cli-path PATH] [--json]   Manage the background indexing service\n" +
