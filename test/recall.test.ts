@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 import type Database from "better-sqlite3";
 import { openDb, insertExchange, type InsertableExchange } from "../src/db.js";
@@ -346,11 +347,83 @@ test("recall surfaces a superseded decision as a conflict in its own DB", async 
       formatBundle(bundle).includes("## Conflicts / stale facts"),
       "formatted bundle renders the conflicts section",
     );
+
+    // MCP's recall_for_task returns JSON.stringify(bundle); conflicts must survive
+    // serialization round-trip with the same typed shape consumers rely on.
+    const roundTripped = JSON.parse(JSON.stringify(bundle));
+    assert.ok(Array.isArray(roundTripped.sections.conflicts), "conflicts serialize as an array");
+    assert.equal(
+      roundTripped.sections.conflicts.length,
+      bundle.sections.conflicts.length,
+      "conflict count survives JSON round-trip",
+    );
+    assert.equal(
+      roundTripped.sections.conflicts[0].current.title,
+      bundle.sections.conflicts[0].current.title,
+      "conflict current/superseded titles survive serialization",
+    );
   } finally {
     iso.close();
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
         unlinkSync(isoPath + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
+});
+
+test("CLI recall surfaces the conflicts section end-to-end", async () => {
+  const dbPath = join(tmpdir(), "omp-cli-recall-conflict-" + randomUUID() + ".db");
+  const db = openDb(dbPath);
+  try {
+    let seed = 1000;
+    for (const file of findSessionFiles(FIX)) {
+      for (const ex of parseSessionFile(file)) {
+        insertExchange(db, toInsertable(ex, seed++));
+      }
+    }
+    extract({ dbPath, sessionsDir: FIX });
+    for (const rec of listMemoryRecords(db, "pending", 1000)) {
+      updateMemoryStatus(db, rec.id, "approved");
+    }
+    const result = supersedeDecisions(db);
+    assert.ok(result.superseded >= 1, "fixture has at least one superseded decision");
+
+    // Close the db so the CLI subprocess can open it cleanly.
+    db.close();
+
+    const spawnResult = spawnSync(process.execPath, [
+      "--import",
+      "tsx",
+      "src/cli.ts",
+      "recall",
+      "What is the current decision for recall cache storage after stale reads?",
+      "--db",
+      dbPath,
+      "--mode",
+      "text",
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+    });
+
+    assert.equal(spawnResult.status, 0);
+    assert.ok(spawnResult.stdout.includes("## Conflicts / stale facts"));
+
+    const stdoutLower = spawnResult.stdout.toLowerCase();
+    assert.ok(stdoutLower.includes("sqlite"));
+    assert.ok(stdoutLower.includes("json"));
+  } finally {
+    try {
+      db.close();
+    } catch {
+      // ignore if already closed
+    }
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(dbPath + suffix);
       } catch {
         // ignore missing sidecar files
       }

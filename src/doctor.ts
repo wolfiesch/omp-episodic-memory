@@ -56,8 +56,14 @@ async function checkEmbeddingModel(probeModel: boolean | undefined): Promise<Doc
     }
   }
 
-  const cacheDir = process.env.TRANSFORMERS_CACHE ?? join(homedir(), ".cache", "huggingface");
-  if (existsSync(cacheDir) && containsMiniLmCache(cacheDir)) {
+  // Transformers.js defaults its cache to node_modules/@xenova/transformers/.cache
+  // (NOT ~/.cache/huggingface) unless TRANSFORMERS_CACHE is set. Check all three.
+  const candidates = [
+    process.env.TRANSFORMERS_CACHE,
+    join(packageRoot(), "node_modules", "@xenova", "transformers", ".cache"),
+    join(homedir(), ".cache", "huggingface"),
+  ].filter((dir): dir is string => typeof dir === "string");
+  if (candidates.some((dir) => existsSync(dir) && containsMiniLmCache(dir))) {
     return { name: "embedding model (cached)", status: "pass", detail: "model cached" };
   }
   return {
