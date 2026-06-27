@@ -9,7 +9,7 @@ import {
   updateMemoryStatus,
   type MemoryRecord,
 } from "./memory.js";
-import type { EdgeType } from "./graph.js";
+import { upsertEdge, upsertEntity, type EdgeType } from "./graph.js";
 
 export interface SupersedeResult {
   superseded: number;
@@ -27,6 +27,27 @@ export interface MemoryDiff {
 
 /** Edge type recorded when one decision supersedes another. */
 const SUPERSEDES_EDGE: EdgeType = "supersedes";
+
+/**
+ * Record a `newer --supersedes--> older` edge in the project graph so the graph
+ * view never diverges from the `supersedes_memory_id` column. Both decision
+ * entities are upserted by title (matching graph-extract's naming), and the edge
+ * carries the newer record's provenance + validity. Idempotent via upsertEdge.
+ */
+function linkSupersedesEdge(db: Database.Database, newer: MemoryRecord, older: MemoryRecord): void {
+  const newerEntity = upsertEntity(db, "decision", newer.title);
+  const olderEntity = upsertEntity(db, "decision", older.title);
+  const source = newer.sources[0];
+  upsertEdge(db, {
+    srcEntityId: newerEntity,
+    edgeType: SUPERSEDES_EDGE,
+    dstEntityId: olderEntity,
+    validFrom: newer.validFrom ?? undefined,
+    sourceSessionId: source ? source.sessionId : null,
+    sourceOrdinal: source ? source.ordinal : null,
+    confidence: newer.confidence,
+  });
+}
 
 /** Tokens too generic to identify a decision subject. */
 const STOPWORDS: Record<string, true> = {
@@ -169,11 +190,32 @@ export function supersedeDecisions(db: Database.Database): SupersedeResult {
       updateMemoryStatus(db, older.id, "superseded");
       setMemoryValidTo(db, older.id, newer.validFrom);
       setSupersedesMemoryId(db, newer.id, older.id);
+      linkSupersedesEdge(db, newer, older);
       pairs.push({ olderId: older.id, newerId: newer.id, subject });
     }
   }
 
   return { superseded: pairs.length, pairs };
+}
+
+/**
+ * Reconstruct `supersedes` graph edges from every record's `supersedes_memory_id`
+ * column, covering links written before edge-wiring existed and records already
+ * marked `superseded` (which `supersedeDecisions` no longer revisits). Idempotent.
+ * Returns the number of edges written.
+ */
+export function backfillSupersedesEdges(db: Database.Database): number {
+  const all = listMemoryRecords(db, undefined, Number.MAX_SAFE_INTEGER);
+  const byId = new Map<number, MemoryRecord>(all.map((r) => [r.id, r]));
+  let written = 0;
+  for (const newer of all) {
+    if (newer.supersedesMemoryId === null) continue;
+    const older = byId.get(newer.supersedesMemoryId);
+    if (!older) continue;
+    linkSupersedesEdge(db, newer, older);
+    written += 1;
+  }
+  return written;
 }
 
 /**

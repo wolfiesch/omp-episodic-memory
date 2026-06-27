@@ -10,6 +10,7 @@ import {
 import { findSessionFiles } from "./indexer.js";
 import { listMemoryRecords } from "./memory.js";
 import { parseSessionFile } from "./parser.js";
+import { backfillSupersedesEdges } from "./supersede.js";
 
 export interface GraphExtractOptions {
   dbPath?: string;
@@ -146,6 +147,10 @@ export function extractGraph(opts: GraphExtractOptions = {}): GraphExtractResult
           confidence: record.confidence,
         });
       }
+
+      // Sync supersedes edges from existing supersedes_memory_id links, covering
+      // records already marked superseded (which supersedeDecisions won't revisit).
+      backfillSupersedesEdges(db);
     });
 
     const after = getGraphStats(db);

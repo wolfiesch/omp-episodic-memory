@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { unlinkSync } from "node:fs";
+import { mkdtempSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
@@ -22,7 +22,7 @@ import {
   insertMemoryRecord,
   type MemorySource,
 } from "../src/memory.js";
-import { memoryDiff, supersedeDecisions } from "../src/supersede.js";
+import { backfillSupersedesEdges, memoryDiff, supersedeDecisions } from "../src/supersede.js";
 
 const FIXTURES_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -392,4 +392,155 @@ test("memoryDiff reports new and superseded decisions after a cutoff", () => {
     diff.newDecisions.some((r) => r.validFrom === 200),
     "newer decision (validFrom 200) is present in newDecisions",
   );
+});
+
+test("supersedeDecisions writes a newer->older supersedes graph edge", () => {
+  const isoPath = join(tmpdir(), "omp-graph-edge-" + randomUUID() + ".db");
+  const iso = openDb(isoPath);
+  try {
+    const EDGE_PROJECT = "/Users/dev/edge-supersede";
+    insertMemoryRecord(iso, {
+      type: "decision",
+      title: "Store recall cache in JSON files",
+      body: "We decided to store recall cache in JSON files.",
+      project: EDGE_PROJECT,
+      validFrom: 100,
+      confidence: 0.9,
+      status: "approved",
+      sources: [source(0)],
+    });
+    insertMemoryRecord(iso, {
+      type: "decision",
+      title: "Store recall cache in SQLite tables",
+      body: "We decided to store recall cache in SQLite tables.",
+      project: EDGE_PROJECT,
+      validFrom: 200,
+      confidence: 0.9,
+      status: "approved",
+      sources: [source(1)],
+    });
+
+    const result = supersedeDecisions(iso);
+    assert.ok(result.superseded >= 1, "a pair was superseded");
+
+    const edges = findEdges(iso, { edgeType: "supersedes" });
+    assert.equal(edges.length, 1, "exactly one supersedes edge written");
+    assert.ok(edges[0].src.name.toLowerCase().includes("sqlite"), "edge source is the newer (SQLite) decision");
+    assert.ok(edges[0].dst.name.toLowerCase().includes("json"), "edge target is the older (JSON) decision");
+
+    // Idempotent: rerunning supersession does not duplicate the edge.
+    supersedeDecisions(iso);
+    assert.equal(findEdges(iso, { edgeType: "supersedes" }).length, 1, "edge not duplicated");
+  } finally {
+    iso.close();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(isoPath + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
+});
+
+test("backfillSupersedesEdges reconstructs edges from existing columns", () => {
+  const isoPath = join(tmpdir(), "omp-graph-backfill-" + randomUUID() + ".db");
+  const iso = openDb(isoPath);
+  try {
+    const BF_PROJECT = "/Users/dev/backfill-supersede";
+    insertMemoryRecord(iso, {
+      type: "decision",
+      title: "Pin embedding model to MiniLM revision one",
+      body: "We decided to pin the embedding model to MiniLM revision one.",
+      project: BF_PROJECT,
+      validFrom: 100,
+      confidence: 0.9,
+      status: "approved",
+      sources: [source(0)],
+    });
+    insertMemoryRecord(iso, {
+      type: "decision",
+      title: "Pin embedding model to MiniLM revision two",
+      body: "We decided to pin the embedding model to MiniLM revision two.",
+      project: BF_PROJECT,
+      validFrom: 200,
+      confidence: 0.9,
+      status: "approved",
+      sources: [source(1)],
+    });
+    // Establish the column links (older is now status="superseded").
+    supersedeDecisions(iso);
+
+    // Wipe the edges to simulate a column-only state (links written before edge wiring).
+    iso.exec("DELETE FROM graph_edges WHERE edge_type = 'supersedes'");
+    assert.equal(findEdges(iso, { edgeType: "supersedes" }).length, 0, "edges cleared");
+
+    const written = backfillSupersedesEdges(iso);
+    assert.equal(written, 1, "backfill rewrote one edge from the column");
+    const edges = findEdges(iso, { edgeType: "supersedes" });
+    assert.equal(edges.length, 1, "edge present after backfill (superseded endpoint included)");
+    assert.ok(edges[0].dst.name.includes("revision one"), "older superseded decision is the edge target");
+  } finally {
+    iso.close();
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(isoPath + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
+});
+
+test("extractGraph rebuild route re-syncs supersedes edges from columns", () => {
+  const isoPath = join(tmpdir(), "omp-graph-route-" + randomUUID() + ".db");
+  const emptySessions = mkdtempSync(join(tmpdir(), "omp-graph-route-sessions-"));
+  const setup = openDb(isoPath);
+  try {
+    const RT_PROJECT = "/Users/dev/route-supersede";
+    insertMemoryRecord(setup, {
+      type: "decision",
+      title: "Publish package from Node 20 runner",
+      body: "We decided to publish the package from a Node 20 runner.",
+      project: RT_PROJECT,
+      validFrom: 100,
+      confidence: 0.9,
+      status: "approved",
+      sources: [source(0)],
+    });
+    insertMemoryRecord(setup, {
+      type: "decision",
+      title: "Publish package from Node 22 runner",
+      body: "We decided to publish the package from a Node 22 runner.",
+      project: RT_PROJECT,
+      validFrom: 200,
+      confidence: 0.9,
+      status: "approved",
+      sources: [source(1)],
+    });
+    supersedeDecisions(setup);
+    setup.exec("DELETE FROM graph_edges WHERE edge_type = 'supersedes'");
+    setup.close();
+
+    // The graph rebuild route (extractGraph) must restore the supersedes edge
+    // even with no session files to scan.
+    extractGraph({ dbPath: isoPath, sessionsDir: emptySessions });
+
+    const check = openDb(isoPath);
+    try {
+      const edges = findEdges(check, { edgeType: "supersedes" });
+      assert.equal(edges.length, 1, "extractGraph re-synced the supersedes edge");
+      assert.ok(edges[0].dst.name.toLowerCase().includes("node 20"), "older Node 20 decision is the edge target");
+    } finally {
+      check.close();
+    }
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(isoPath + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
 });
