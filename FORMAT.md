@@ -38,8 +38,8 @@ from their own header line if present, else falls back to the JSONL filename ste
   collect distinct `name`s into `toolNames` and append a `toolEvents` entry with
   `callId`, `toolName`, normalized `arguments`, derived `command`, and derived
   top-level `filePaths`.
-- `{ "type": "image", ... }` — IGNORE.
-- Role `toolResult` messages — ignore their content for assistant prose, but
+- `{ "type": "image", ... }` - IGNORE.
+- Role `toolResult` messages - ignore their content for assistant prose, but
   merge it into `toolEvents.resultText`, `isError`, `details`, and `exitCode`.
 
 ## Exchange assembly (parser output = Exchange[])

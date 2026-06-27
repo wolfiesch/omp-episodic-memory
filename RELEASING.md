@@ -21,13 +21,13 @@ Checklist for cutting a release of `omp-episodic-memory`. Versions follow
 
 ## Package verification (catches publish-time surprises)
 
-8. `bun run build` — `dist/` compiles.
+8. `bun run build` - `dist/` compiles.
 9. Confirm both bin shebangs: `head -1 dist/cli.js dist/mcp-server.js`
    (each must start with `#!/usr/bin/env node`).
-10. `npm pack --dry-run` — inspect the tarball. It must contain `dist/`,
+10. `npm pack --dry-run` - inspect the tarball. It must contain `dist/`,
     `README.md`, `FORMAT.md`, `LICENSE`, `package.json` and nothing stray
     (no `src/`, `test/`, `.db`, `node_modules`).
-11. `npm publish --dry-run --access public` — **must emit no `bin` warnings.**
+11. `npm publish --dry-run --access public` - **must emit no `bin` warnings.**
     npm's bin-path validator rejects a leading `./`; bin paths must be bare
     (`dist/cli.js`, not `./dist/cli.js`). If it auto-corrects/removes bins,
     fix `package.json` and re-run before publishing.
