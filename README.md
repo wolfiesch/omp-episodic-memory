@@ -2,18 +2,17 @@
 
 # 🧠 omp-episodic-memory
 
-**Local-first experience memory for coding agents.**
+### Local-first experience memory for coding agents.
 
-Index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas — without ever modifying OMP state.
+Index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas - without ever modifying OMP state.
 
-[![CI](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg)](https://www.npmjs.com/package/omp-episodic-memory)
-[![Install with npx](https://img.shields.io/static/v1?label=install&message=npx%20-p&color=6366f1)](#install)
-[![Node.js](https://img.shields.io/node/v/omp-episodic-memory.svg)](https://nodejs.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
+[![CI](https://img.shields.io/github/actions/workflow/status/wolfiesch/omp-episodic-memory/ci.yml?branch=main&style=flat-square)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg?style=flat-square&color=cb3837)](https://www.npmjs.com/package/omp-episodic-memory)
+[![Node.js](https://img.shields.io/node/v/omp-episodic-memory.svg?style=flat-square&color=339933)](https://nodejs.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](#contributing)
 
-[Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works) · [CLI](#cli) · [MCP server](#mcp-server) · [Contributing](#contributing)
+[Install](#install) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [CLI Reference](#cli) · [MCP Server](#mcp-server) · [Contributing](#contributing)
 
 </div>
 
@@ -65,7 +64,7 @@ OMP Hindsight and Mnemopi are curated operational memory for the agent's working
 | Letta | Stateful agent runtime with memory as part of the agent system. | Different lane: this project is an external audit and recall layer for existing OMP sessions. |
 
 
-OMP's built-in memory is curated and compressed — a distilled view optimized for the agent's working context. That is useful, but it is lossy: the original wording, the dead ends, and the precise moment a decision was made are gone.
+OMP's built-in memory is curated and compressed - a distilled view optimized for the agent's working context. That is useful, but it is lossy: the original wording, the dead ends, and the precise moment a decision was made are gone.
 
 This tool takes the opposite stance. It indexes the **raw transcripts** as they sit on disk and gives you provenance back to the exact conversation and exchange. Use it to answer:
 
@@ -73,18 +72,18 @@ This tool takes the opposite stance. It indexes the **raw transcripts** as they 
 - What did the agent actually say (verbatim), not the summary?
 - Which session decided X, and what was the reasoning at the time?
 
-The index is read-only with respect to OMP state. Derived memory (decisions, gotchas, runbooks) is proposed into a separate reviewable inbox — nothing is asserted into your knowledge base without an explicit approve step.
+The index is read-only with respect to OMP state. Derived memory (decisions, gotchas, runbooks) is proposed into a separate reviewable inbox - nothing is asserted into your knowledge base without an explicit approve step.
 
 This is not a competitor to general-purpose agent memory frameworks (Mem0, Zep, Letta) or to OMP-native curation (Hindsight). Its lane is narrow on purpose: raw-transcript provenance plus reviewable derived memory for OMP coding sessions.
 
 ## What it does
 
-- **Hybrid search** — FTS5 keyword retrieval and `sqlite-vec` vector retrieval fused with Reciprocal Rank Fusion (RRF). Modes: `both`, `vector`, `text`.
-- **Typed, reviewable derived memory** — decisions, gotchas, and runbooks extracted from transcripts into an approve/reject inbox. Nothing enters the knowledge base without review.
-- **`recall_for_task` evidence bundles** — task-scoped retrieval that returns supporting evidence with a confidence score and abstains when the index has nothing relevant, rather than fabricating an answer.
-- **Temporal project graph** — entities and time-bounded edges, with decision supersession and a memory diff to see what changed since a given date.
-- **Pinned project-context blocks** — durable, project-scoped context surfaced alongside recall.
-- **Recall eval harness** — a reproducible benchmark over question/session fixtures that reports recall, ranking, abstention, and latency metrics as a regression guardrail.
+- **Hybrid search** - FTS5 keyword retrieval and `sqlite-vec` vector retrieval fused with Reciprocal Rank Fusion (RRF). Modes: `both`, `vector`, `text`.
+- **Typed, reviewable derived memory** - decisions, gotchas, and runbooks extracted from transcripts into an approve/reject inbox. Nothing enters the knowledge base without review.
+- **`recall_for_task` evidence bundles** - task-scoped retrieval that returns supporting evidence with a confidence score and abstains when the index has nothing relevant, rather than fabricating an answer.
+- **Temporal project graph** - entities and time-bounded edges, with decision supersession and a memory diff to see what changed since a given date.
+- **Pinned project-context blocks** - durable, project-scoped context surfaced alongside recall.
+- **Recall eval harness** - a reproducible benchmark over question/session fixtures that reports recall, ranking, abstention, and latency metrics as a regression guardrail.
 
 ## Install
 
@@ -124,6 +123,39 @@ service points at a stable path. If you run it from a temporary `npx` location, 
 to pin the daemon to a CLI that will not be cleaned up.
 
 ## How it works
+
+```mermaid
+flowchart TD
+    subgraph Input ["Source Transcripts"]
+        S[OMP Sessions<br>~/.omp/agent/sessions/*.jsonl]
+    end
+
+    subgraph Pipeline ["Indexer & Storage"]
+        P[Parser] -->|Exchange & Tool Events| D[(Local SQLite Index)]
+        E[Transformers.js<br>MiniLM-L6-v2] -->|384-d Embeddings| D
+        I[Ignore Filter<br>.omp-episodic-ignore] -.-> P
+        R[Redaction Engine<br>Secret Scrubbing] -.-> P
+    end
+
+    subgraph Retrieval ["Search & Recall Engine"]
+        Q[Query / Task] --> H{Hybrid Search}
+        H -->|FTS5| F[Text Match]
+        H -->|sqlite-vec| V[Vector Match]
+        F & V -->|Reciprocal Rank Fusion| RRF[RRF Ranker]
+        RRF --> R_Bundle[Grouped Evidence Bundle]
+    end
+
+    subgraph Derived ["Extracted Memories"]
+        D --> EX[Memory Extractor]
+        EX -->|Proposals| Inbox[Approve / Reject Inbox]
+        Inbox -->|Approved| Approved[Durable Knowledge Base]
+    end
+
+    S --> P
+    D -.-> Q
+    Approved -.-> H
+```
+
 
 | Stage | What happens |
 | --- | --- |

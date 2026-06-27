@@ -300,11 +300,11 @@ async function cmdExtract(flags: Map<string, string>): Promise<void> {
     for (const c of candidates) {
       const matched = c.matchedText.replace(/\s+/g, " ").trim().slice(0, 100);
       process.stdout.write(
-        `(${c.record.type}, ${c.record.confidence.toFixed(2)}) ${c.record.title} — ${c.record.project ?? "no-project"}\n` +
+        `(${c.record.type}, ${c.record.confidence.toFixed(2)}) ${c.record.title} - ${c.record.project ?? "no-project"}\n` +
           `    rule=${c.rule}  match="${matched}"\n`,
       );
     }
-    process.stdout.write(`\n${candidates.length} candidate(s) — dry run, nothing written.\n`);
+    process.stdout.write(`\n${candidates.length} candidate(s) - dry run, nothing written.\n`);
     return;
   }
   process.stderr.write(`Extracting derived memories into ${dbPath}...\n`);
@@ -321,7 +321,7 @@ async function cmdExtract(flags: Map<string, string>): Promise<void> {
 }
 
 function formatRecordLine(r: MemoryRecord): string {
-  return `[${r.id}] (${r.type}, ${r.confidence.toFixed(2)}, ${r.status}) ${r.title} — ${r.project ?? "no-project"} (${r.sources.length} source${r.sources.length === 1 ? "" : "s"})`;
+  return `[${r.id}] (${r.type}, ${r.confidence.toFixed(2)}, ${r.status}) ${r.title} - ${r.project ?? "no-project"} (${r.sources.length} source${r.sources.length === 1 ? "" : "s"})`;
 }
 
 function cmdInbox(flags: Map<string, string>): void {
@@ -398,7 +398,7 @@ function cmdMemories(positional: string[], flags: Map<string, string>): void {
   for (const r of records) {
     const snippet = r.body.replace(/\s+/g, " ").trim().slice(0, 120);
     process.stdout.write(
-      `[${r.id}] (${r.type}) ${r.title} — ${r.project ?? "no-project"}\n    ${snippet}\n`,
+      `[${r.id}] (${r.type}) ${r.title} - ${r.project ?? "no-project"}\n    ${snippet}\n`,
     );
   }
 }
@@ -636,7 +636,7 @@ async function cmdDoctor(flags: Map<string, string>): Promise<void> {
     process.stdout.write(`${JSON.stringify(checks, null, 2)}\n`);
   } else {
     for (const check of checks) {
-      process.stdout.write(`${doctorSymbol(check.status)} ${check.name} — ${check.detail}\n`);
+      process.stdout.write(`${doctorSymbol(check.status)} ${check.name} - ${check.detail}\n`);
     }
   }
   if (checks.some((check) => check.status === "fail")) process.exitCode = 1;

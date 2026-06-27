@@ -481,7 +481,7 @@ export async function recallForTask(
 /** Render a bundle as compact markdown for human/agent display. */
 export function formatBundle(bundle: RecallBundle): string {
   const lines: string[] = [];
-  lines.push(`**Recall** — confidence: ${bundle.confidence} | intents: ${bundle.intents.join(", ")}`);
+  lines.push(`**Recall** - confidence: ${bundle.confidence} | intents: ${bundle.intents.join(", ")}`);
   lines.push("");
   lines.push(bundle.summary);
   for (const section of SECTION_ORDER) {
@@ -490,7 +490,7 @@ export function formatBundle(bundle: RecallBundle): string {
     lines.push("");
     lines.push(`## ${section.title}`);
     for (const ev of items) {
-      const loc = ev.path ? ` — ${ev.path}${ev.ordinal !== null ? `#${ev.ordinal}` : ""}` : "";
+      const loc = ev.path ? ` - ${ev.path}${ev.ordinal !== null ? `#${ev.ordinal}` : ""}` : "";
       lines.push(`- [${ev.kind}] ${ev.title}${ev.date ? ` (${ev.date})` : ""}${loc}`);
       lines.push(`  ${ev.quote}`);
       if (ev.toolEvents?.length) {

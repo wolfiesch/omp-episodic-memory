@@ -130,7 +130,7 @@ function formatHits(hits: SearchHit[], query: string): string {
 
 function formatMemoryRecord(r: MemoryRecord): string {
   const src = r.sources[0];
-  const loc = src ? ` — ${src.sourcePath}#${src.ordinal}` : "";
+  const loc = src ? ` - ${src.sourcePath}#${src.ordinal}` : "";
   const body = r.body.replace(/\s+/g, " ").trim().slice(0, 240);
   return `- (${r.type}, conf ${r.confidence.toFixed(2)}) ${r.title}${loc}\n  ${body}`;
 }
@@ -252,7 +252,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "recall_for_task",
       description:
-        "Before starting a coding task, retrieve an evidence-backed context packet from prior OMP sessions — grouped into decisions, gotchas, runbooks, project context, prior episodes, conflicts, and abstentions, with a confidence tier and raw citations.",
+        "Before starting a coding task, retrieve an evidence-backed context packet from prior OMP sessions - grouped into decisions, gotchas, runbooks, project context, prior episodes, conflicts, and abstentions, with a confidence tier and raw citations.",
       inputSchema: {
         type: "object",
         properties: {
