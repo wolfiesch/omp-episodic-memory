@@ -1,18 +1,19 @@
 // Crawl OMP session transcripts, embed each exchange, and persist to the index DB.
 // All logging goes to stderr; progress is reported via the onProgress callback.
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import Database from "better-sqlite3";
 import {
+  deleteExchangesByIds,
   insertExchange,
   openDb,
+  prepareExchange,
   runInTransaction,
 } from "./db.js";
 import { embedExchange, initEmbeddings } from "./embeddings.js";
 import { isSessionFile, iterateSessionFile, parseSessionFile } from "./parser.js";
 import { DEFAULT_SESSIONS_DIR } from "./types.js";
-import { serializeToolEvents, toolEventsIndexText } from "./tool-events.js";
 
 function globToRegExp(pattern: string): RegExp {
   let glob = pattern;
@@ -126,6 +127,68 @@ export function ensureIndexStateTable(db: Database.Database): void {
   );
 }
 
+function isWithinDirectory(path: string, directory: string): boolean {
+  const relativePath = relative(resolve(directory), resolve(path));
+  return (
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  );
+}
+
+/**
+ * Remove exchanges whose previously indexed source file no longer exists.
+ * Only records beneath the active sessions root are eligible.
+ */
+export function reconcileDeletedSources(
+  db: Database.Database,
+  sessionsDir: string,
+): number {
+  ensureIndexStateTable(db);
+  const indexedPaths = db
+    .prepare(`SELECT path FROM indexed_files`)
+    .pluck()
+    .all() as string[];
+  const selectExchangeIds = db
+    .prepare(`SELECT id FROM exchanges WHERE source_path = ?`)
+    .pluck();
+  const deleteIndexedFile = db
+    .prepare(`DELETE FROM indexed_files WHERE path = ?`);
+  let deleted = 0;
+
+  for (const path of indexedPaths) {
+    if (!isWithinDirectory(path, sessionsDir) || existsSync(path)) continue;
+    deleted += deleteExchangesByIds(db, selectExchangeIds.all(path) as number[]);
+    deleteIndexedFile.run(path);
+  }
+  return deleted;
+}
+
+interface ExchangeOrdinalRow {
+  id: number;
+  session_id: string;
+  ordinal: number;
+}
+
+/** Remove rows left behind when a successfully parsed source file shrinks. */
+export function pruneSourceExchanges(
+  db: Database.Database,
+  sourcePath: string,
+  seen: ReadonlyArray<{ sessionId: string; ordinal: number }>,
+): number {
+  const seenKeys = new Set(
+    seen.map(({ sessionId, ordinal }) => `${sessionId}\0${ordinal}`),
+  );
+  const rows = db
+    .prepare(`SELECT id, session_id, ordinal FROM exchanges WHERE source_path = ?`)
+    .all(sourcePath) as ExchangeOrdinalRow[];
+  const staleRowids: number[] = [];
+  for (const row of rows) {
+    if (!seenKeys.has(`${row.session_id}\0${row.ordinal}`)) staleRowids.push(row.id);
+  }
+  return deleteExchangesByIds(db, staleRowids);
+}
+
 /** Decide whether a file needs (re)indexing given its stored vs current mtime. */
 export function shouldIndexFile(
   storedMtimeMs: number | undefined,
@@ -144,6 +207,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
     ensureIndexStateTable(db);
 
     let files = findSessionFiles(opts.sessionsDir);
+    reconcileDeletedSources(db, opts.sessionsDir ?? DEFAULT_SESSIONS_DIR);
     if (opts.maxFiles !== undefined) {
       files = files.slice(0, opts.maxFiles);
     }
@@ -155,8 +219,8 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       `INSERT INTO indexed_files (path, mtime_ms, indexed_at) VALUES (?,?,?)
        ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, indexed_at=excluded.indexed_at`,
     );
-    const selectContent = db.prepare(
-      `SELECT source_path, title, cwd, timestamp, user_text, assistant_text, tool_names, tool_events, tool_event_text
+    const selectContentHash = db.prepare(
+      `SELECT content_hash
        FROM exchanges WHERE session_id=? AND ordinal=?`,
     );
 
@@ -185,6 +249,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       }
 
       let insertedForFile = 0;
+      const seenExchanges: Array<{ sessionId: string; ordinal: number }> = [];
       try {
         // Consume exchanges incrementally: do not materialize a per-session Exchange[]
         // before embedding/upserting. The file mtime is marked only after the iterator
@@ -192,33 +257,17 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         for await (const ex of iterateSessionFile(file, {
           maxBytes: opts.maxBytes ?? 200 * 1024 * 1024,
         })) {
-          const toolNamesJson = JSON.stringify(ex.toolNames);
-          const toolEventsJson = serializeToolEvents(ex.toolEvents);
-          const toolEventText = toolEventsIndexText(ex.toolEvents);
-          const existing = selectContent.get(ex.sessionId, ex.ordinal) as
-            | {
-                source_path: string;
-                title: string | null;
-                cwd: string | null;
-                timestamp: number;
-                user_text: string;
-                assistant_text: string | null;
-                tool_names: string | null;
-                tool_events: string | null;
-                tool_event_text: string | null;
-              }
+          seenExchanges.push({
+            sessionId: ex.sessionId,
+            ordinal: ex.ordinal,
+          });
+          const prepared = prepareExchange(ex);
+          const existing = selectContentHash.get(ex.sessionId, ex.ordinal) as
+            | { content_hash: Buffer }
             | undefined;
           if (
             existing !== undefined &&
-            existing.source_path === ex.sourcePath &&
-            existing.title === ex.title &&
-            existing.cwd === ex.cwd &&
-            existing.timestamp === ex.timestamp &&
-            existing.user_text === ex.userText &&
-            (existing.assistant_text ?? "") === ex.assistantText &&
-            (existing.tool_names ?? "[]") === toolNamesJson &&
-            (existing.tool_events ?? "[]") === toolEventsJson &&
-            (existing.tool_event_text ?? "") === toolEventText
+            existing.content_hash.equals(prepared.contentHash)
           ) {
             continue;
           }
@@ -230,7 +279,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
             ex.toolEvents,
           );
           const inserted = runInTransaction(db, () =>
-            insertExchange(db, { ...ex, embedding }) ? 1 : 0,
+            insertExchange(db, { ...ex, embedding }, prepared) ? 1 : 0,
           );
           insertedForFile += inserted;
         }
@@ -248,6 +297,8 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         }
         throw err;
       }
+
+      pruneSourceExchanges(db, file, seenExchanges);
 
       runInTransaction(db, () => {
         upsertMtime.run(file, mtimeMs, Date.now());

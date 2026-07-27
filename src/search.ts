@@ -4,7 +4,11 @@ import type Database from "better-sqlite3";
 
 import { embed } from "./embeddings.js";
 import type { SearchHit, SearchOptions } from "./types.js";
-import { formatToolEventSummary, parseToolEvents } from "./tool-events.js";
+import {
+  formatToolEventSummary,
+  parseToolEventMetadata,
+  parseToolEvents,
+} from "./tool-events.js";
 
 /** RRF constant. */
 const RRF_K = 60;
@@ -19,7 +23,8 @@ interface ExchangeRow {
   timestamp: number;
   user_text: string;
   assistant_text: string;
-  tool_events: string | null;
+  tool_events: Buffer;
+  tool_metadata: string;
 }
 
 /** Split a raw query into word tokens, matching FTS5's tokenizer boundaries. */
@@ -184,7 +189,8 @@ export async function search(
   );
 
   const selectRow = db.prepare(
-    `SELECT id, session_id, source_path, title, cwd, ordinal, timestamp, user_text, assistant_text, tool_events
+    `SELECT id, session_id, source_path, title, cwd, ordinal, timestamp, user_text,
+            assistant_text, tool_events, tool_metadata
      FROM exchanges WHERE id = ?`,
   );
 
@@ -194,9 +200,10 @@ export async function search(
     if (!row) continue;
     if (opts.after !== undefined && row.timestamp < opts.after) continue;
     if (opts.before !== undefined && row.timestamp > opts.before) continue;
+    const toolMetadata = parseToolEventMetadata(row.tool_metadata);
+    if (opts.toolName !== undefined && !toolMetadata.some((event) => event.toolName === opts.toolName)) continue;
+    if (opts.toolError !== undefined && !toolMetadata.some((event) => event.isError === opts.toolError)) continue;
     const toolEvents = parseToolEvents(row.tool_events);
-    if (opts.toolName !== undefined && !toolEvents.some((event) => event.toolName === opts.toolName)) continue;
-    if (opts.toolError !== undefined && !toolEvents.some((event) => event.isError === opts.toolError)) continue;
 
     const userPart = row.user_text.replace(/\s+/g, " ").trim();
     const asstPart = row.assistant_text.replace(/\s+/g, " ").trim();

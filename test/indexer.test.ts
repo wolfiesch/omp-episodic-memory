@@ -7,8 +7,17 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import type Database from "better-sqlite3";
-import { openDb } from "../src/db.js";
-import { ensureIndexStateTable, findSessionFiles, matchesIgnore, shouldIndexFile } from "../src/indexer.js";
+import { insertExchange, openDb, type InsertableExchange } from "../src/db.js";
+import {
+  ensureIndexStateTable,
+  findSessionFiles,
+  matchesIgnore,
+  pruneSourceExchanges,
+  reconcileDeletedSources,
+  shouldIndexFile,
+} from "../src/indexer.js";
+import { parseSessionFile } from "../src/parser.js";
+import { EMBEDDING_DIM } from "../src/types.js";
 
 const SESSIONS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -18,6 +27,23 @@ const SESSIONS_DIR = join(
 
 interface IndexedFileRow {
   mtime_ms: number;
+}
+
+function fixtureExchange(
+  sourcePath: string,
+  sessionId: string,
+  ordinal: number,
+  userText?: string,
+): InsertableExchange {
+  const base = parseSessionFile(findSessionFiles(SESSIONS_DIR)[0]!)[0]!;
+  return {
+    ...base,
+    sourcePath,
+    sessionId,
+    ordinal,
+    userText: userText ?? base.userText,
+    embedding: new Float32Array(EMBEDDING_DIM).fill(1 / Math.sqrt(EMBEDDING_DIM)),
+  };
 }
 
 let dbPath: string;
@@ -148,4 +174,69 @@ test("findSessionFiles: trailing-slash dir pattern excludes a nested session fil
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("reconcileDeletedSources removes only indexed source files that disappeared", () => {
+  const root = join(tmpdir(), `indexer-reconcile-${randomUUID()}`);
+  const livePath = join(root, "live.jsonl");
+  const deletedPath = join(root, "deleted.jsonl");
+  mkdirSync(root, { recursive: true });
+  writeFileSync(livePath, "{}\n");
+  try {
+    ensureIndexStateTable(db);
+    insertExchange(db, fixtureExchange(livePath, `live-${randomUUID()}`, 0));
+    insertExchange(db, fixtureExchange(deletedPath, `deleted-${randomUUID()}`, 0));
+    const upsert = db.prepare(
+      `INSERT INTO indexed_files (path, mtime_ms, indexed_at) VALUES (?, ?, ?)`,
+    );
+    upsert.run(livePath, 1, Date.now());
+    upsert.run(deletedPath, 1, Date.now());
+
+    assert.equal(reconcileDeletedSources(db, root), 1);
+    assert.equal(
+      db.prepare(`SELECT COUNT(*) FROM exchanges WHERE source_path = ?`).pluck().get(deletedPath),
+      0,
+    );
+    assert.equal(
+      db.prepare(`SELECT COUNT(*) FROM exchanges WHERE source_path = ?`).pluck().get(livePath),
+      1,
+    );
+    assert.equal(
+      db.prepare(`SELECT COUNT(*) FROM indexed_files WHERE path = ?`).pluck().get(deletedPath),
+      0,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneSourceExchanges removes stale ordinals from every index table", () => {
+  const sourcePath = join(tmpdir(), `indexer-stale-${randomUUID()}.jsonl`);
+  const sessionId = `stale-${randomUUID()}`;
+  insertExchange(db, fixtureExchange(sourcePath, sessionId, 0));
+  insertExchange(
+    db,
+    fixtureExchange(sourcePath, sessionId, 1, "STALE_ORDINAL_SENTINEL"),
+  );
+
+  assert.equal(
+    pruneSourceExchanges(db, sourcePath, [{ sessionId, ordinal: 0 }]),
+    1,
+  );
+  assert.equal(
+    db.prepare(`SELECT COUNT(*) FROM exchanges WHERE source_path = ?`).pluck().get(sourcePath),
+    1,
+  );
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) FROM exchanges_fts WHERE exchanges_fts MATCH ?`,
+    ).pluck().get(`"STALE_ORDINAL_SENTINEL"`),
+    0,
+  );
+  assert.equal(
+    db.prepare(
+      `SELECT COUNT(*) FROM exchanges_vec WHERE rowid NOT IN (SELECT id FROM exchanges)`,
+    ).pluck().get(),
+    0,
+  );
 });

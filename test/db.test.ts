@@ -18,7 +18,7 @@ import {
 } from "../src/db.js";
 import { parseSessionFile } from "../src/parser.js";
 import { EMBEDDING_DIM, type Exchange } from "../src/types.js";
-import { parseToolEvents } from "../src/tool-events.js";
+import { parseToolEventMetadata, parseToolEvents } from "../src/tool-events.js";
 
 const FIXTURES_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -116,6 +116,17 @@ test("openDb/initSchema creates a usable empty DB", () => {
   assert.equal(stats.sessions, 0);
   assert.equal(stats.earliest, null);
   assert.equal(stats.latest, null);
+  const columns = tableColumns(db, "exchanges");
+  assert.ok(columns.includes("tool_events"));
+  assert.ok(columns.includes("tool_metadata"));
+  assert.ok(columns.includes("content_hash"));
+  assert.equal(columns.includes("tool_event_text"), false);
+  const fts = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'exchanges_fts'`)
+    .get() as { sql: string };
+  assert.match(fts.sql, /content=''/);
+  assert.match(fts.sql, /contentless_delete=1/);
+  assert.match(fts.sql, /detail=full/);
 });
 
 test("insertExchange inserts one row and getStats reflects it", () => {
@@ -151,6 +162,17 @@ test("insertExchange is idempotent and updates in place on change", () => {
     )
     .get(ex.sessionId, ex.ordinal) as { user_text: string };
   assert.match(row.user_text, /EXTRA_MARKER_TOKEN/);
+  const ftsHit = db
+    .prepare(`SELECT rowid FROM exchanges_fts WHERE exchanges_fts MATCH ?`)
+    .get(`"EXTRA_MARKER_TOKEN"`) as { rowid: number } | undefined;
+  assert.ok(ftsHit);
+
+  const reverted = insertExchange(db, toInsertable(ex, 0));
+  assert.equal(reverted, true);
+  const staleFtsHit = db
+    .prepare(`SELECT rowid FROM exchanges_fts WHERE exchanges_fts MATCH ?`)
+    .get(`"EXTRA_MARKER_TOKEN"`);
+  assert.equal(staleFtsHit, undefined);
 });
 
 test("inserting all fixture exchanges yields matching exchange and session stats", () => {
@@ -170,33 +192,50 @@ test("inserting all fixture exchanges yields matching exchange and session stats
   assert.equal(stats.latest, Math.max(...timestamps));
 });
 
-test("insertExchange persists serialized tool events and FTS text", () => {
+test("insertExchange stores compressed events and indexes full tool evidence", () => {
   const ex = allFixtureExchanges()[0];
   assert.ok(ex, "fixture exchange must exist");
   insertExchange(db, toInsertable(ex, 42));
   const row = db
-    .prepare(`SELECT tool_events, tool_event_text FROM exchanges WHERE session_id = ? AND ordinal = ?`)
-    .get(ex.sessionId, ex.ordinal) as { tool_events: string | null; tool_event_text: string | null };
-  const events = parseToolEvents(row.tool_events);
-  assert.equal(events[0]?.toolName, "bash");
-  assert.match(row.tool_event_text ?? "", /ABI_MISMATCH_SENTINEL/);
-  assert.match(row.tool_event_text ?? "", /npm rebuild sqlite-vec/);
-  assert.match(row.tool_event_text ?? "", /src\/db\.ts/);
-  assert.match(row.tool_event_text ?? "", /exitCode\s+1/);
+    .prepare(`SELECT tool_events, tool_metadata, content_hash FROM exchanges WHERE session_id = ? AND ordinal = ?`)
+    .get(ex.sessionId, ex.ordinal) as {
+      tool_events: Buffer;
+      tool_metadata: string;
+      content_hash: Buffer;
+    };
+  assert.ok(Buffer.isBuffer(row.tool_events));
+  assert.equal(row.content_hash.byteLength, 32);
+  assert.equal(parseToolEvents(row.tool_events)[0]?.toolName, "bash");
+  assert.equal(parseToolEventMetadata(row.tool_metadata)[0]?.toolName, "bash");
+
+  for (const query of [
+    `"ABI_MISMATCH_SENTINEL"`,
+    `"npm" AND "rebuild" AND "sqlite" AND "vec"`,
+    `"src" AND "db" AND "ts"`,
+    `"exitCode" AND "1"`,
+  ]) {
+    const hit = db
+      .prepare(`SELECT rowid FROM exchanges_fts WHERE exchanges_fts MATCH ?`)
+      .get(query) as { rowid: number } | undefined;
+    assert.ok(hit, `expected FTS hit for ${query}`);
+  }
 });
 
-test("initSchema migrates legacy exchange tables", () => {
+test("openDb refuses legacy schemas instead of rewriting them in place", () => {
   const path = join(tmpdir(), "omp-epi-legacy-" + randomUUID() + ".db");
   createLegacyDb(path);
-  const migrated = openDb(path);
   try {
-    assert.ok(tableColumns(migrated, "exchanges").includes("tool_events"));
-    assert.ok(tableColumns(migrated, "exchanges").includes("tool_event_text"));
-    assert.ok(tableColumns(migrated, "exchanges_fts").includes("tool_event_text"));
-    const row = migrated.prepare("SELECT COUNT(*) AS count FROM exchanges").get() as { count: number };
-    assert.equal(row.count, 1);
+    assert.throws(
+      () => openDb(path),
+      /Index DB schema is outdated\. Run "omp-episodic migrate"/,
+    );
+    const legacy = new Database(path, { readonly: true });
+    try {
+      assert.equal(tableColumns(legacy, "exchanges").includes("tool_events"), false);
+    } finally {
+      legacy.close();
+    }
   } finally {
-    migrated.close();
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
         unlinkSync(path + suffix);
@@ -213,11 +252,8 @@ test("openReadOnlyDb reports old schema clearly", () => {
   try {
     assert.throws(
       () => openReadOnlyDb(path),
-      /Index DB schema is outdated\. Run "omp-episodic index --force" once to migrate tool event columns\./,
+      /Index DB schema is outdated\. Run "omp-episodic migrate"/,
     );
-    openDb(path).close();
-    const readonly = openReadOnlyDb(path);
-    readonly.close();
   } finally {
     for (const suffix of ["", "-wal", "-shm"]) {
       try {

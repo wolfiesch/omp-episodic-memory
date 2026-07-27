@@ -9,7 +9,19 @@ import type Database from "better-sqlite3";
 import { search } from "./search.js";
 import { getSupersededBy, searchMemoryRecords, type MemoryRecord, type MemoryType } from "./memory.js";
 import type { SearchHit, SearchMode, ToolEvent } from "./types.js";
-import { formatToolEventSummary } from "./tool-events.js";
+import {
+  formatToolEventSummary,
+  parseToolEvents,
+  toolEventsIndexText,
+} from "./tool-events.js";
+
+/** Columns hydrated to re-check task relevance against the full exchange text. */
+interface HydratedExchangeRow {
+  user_text: string;
+  assistant_text: string | null;
+  tool_names: string;
+  tool_events: Buffer;
+}
 
 /** Retrieval intents inferred from the task text. */
 export type RecallIntent =
@@ -384,17 +396,16 @@ export async function recallForTask(
     // `snippet` is only user_text; the search may have matched assistant_text or
     // tool names, so hydrate the full exchange text before gating an episode.
     const hydrateText = db.prepare(
-      `SELECT user_text, assistant_text, tool_names, tool_event_text FROM exchanges
+      `SELECT user_text, assistant_text, tool_names, tool_events FROM exchanges
        WHERE session_id = ? AND ordinal = ?`,
     );
     episodes = episodes.filter((e) => {
-      const row = hydrateText.get(e.sessionId, e.ordinal) as
-        | { user_text: string; assistant_text: string | null; tool_names: string | null; tool_event_text: string | null }
-        | undefined;
-      const full = row
-        ? `${e.title ?? ""} ${row.user_text} ${row.assistant_text ?? ""} ${row.tool_names ?? ""} ${row.tool_event_text ?? ""}`
-        : `${e.title ?? ""} ${e.snippet}`;
-      return relevant(full);
+      const row = hydrateText.get(e.sessionId, e.ordinal) as HydratedExchangeRow | undefined;
+      if (row === undefined) return relevant(`${e.title ?? ""} ${e.snippet}`);
+      const toolText = toolEventsIndexText(parseToolEvents(row.tool_events));
+      return relevant(
+        `${e.title ?? ""} ${row.user_text} ${row.assistant_text ?? ""} ${row.tool_names} ${toolText}`,
+      );
     });
     memories = memories.filter((m) => relevant(`${m.title} ${m.body} ${m.entities.join(" ")}`));
   }

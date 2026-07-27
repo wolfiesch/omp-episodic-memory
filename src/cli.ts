@@ -33,6 +33,10 @@ import {
   type BlockKind,
 } from "./blocks.js";
 import { DEFAULT_DB_PATH, type SearchMode } from "./types.js";
+import {
+  activateCompactedDatabase,
+  buildCompactedDatabase,
+} from "./migrate.js";
 import { existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import {
@@ -743,6 +747,79 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
     process.exitCode = 1;
   }
 }
+
+async function cmdMigrate(
+  positional: string[],
+  flags: Map<string, string>,
+): Promise<void> {
+  const subcommand = positional[0] ?? "build";
+  const sourcePath = flags.get("db") ?? DEFAULT_DB_PATH;
+  const candidatePath =
+    flags.get("candidate") ??
+    flags.get("output") ??
+    `${sourcePath}.compact-v2`;
+  const isJson = flags.get("json") === "true";
+
+  if (subcommand === "build") {
+    if (!isJson) {
+      process.stderr.write(
+        `Building compact migration candidate at ${candidatePath}...\n`,
+      );
+    }
+    const report = await buildCompactedDatabase({
+      sourcePath,
+      outputPath: candidatePath,
+      onProgress: isJson
+        ? undefined
+        : (completed, total) => {
+            if (completed % 5000 === 0 || completed === total) {
+              process.stderr.write(
+                `  Migrated ${completed}/${total} exchanges\n`,
+              );
+            }
+          },
+    });
+    if (isJson) {
+      process.stdout.write(
+        `${JSON.stringify({ candidatePath, ...report })}\n`,
+      );
+    } else {
+      const savedBytes = report.sourceBytes - report.outputBytes;
+      process.stdout.write(
+        `Candidate verified: ${report.exchanges} exchanges, integrity ${report.integrityCheck}, ${savedBytes} bytes smaller.\n`,
+      );
+      process.stdout.write(
+        `Activate after stopping the indexing daemon:\n  omp-episodic migrate activate --db ${JSON.stringify(sourcePath)} --candidate ${JSON.stringify(candidatePath)}\n`,
+      );
+    }
+    return;
+  }
+
+  if (subcommand === "activate") {
+    const report = activateCompactedDatabase({
+      sourcePath,
+      candidatePath,
+      keepBackup: flags.get("keep-backup") === "true",
+    });
+    if (isJson) {
+      process.stdout.write(`${JSON.stringify(report)}\n`);
+    } else {
+      process.stdout.write(
+        `Activated compact index with ${report.exchanges} exchanges.${
+          report.backupPath === null
+            ? ""
+            : ` Backup retained at ${report.backupPath}.`
+        }\n`,
+      );
+    }
+    return;
+  }
+
+  throw new Error(
+    `Unknown migrate command: ${subcommand}. Expected "build" or "activate".`,
+  );
+}
+
 async function cmdSetup(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const sessionsDir = flags.get("sessions");
@@ -875,6 +952,9 @@ async function main(): Promise<void> {
     case "daemon":
       cmdDaemon(positional, flags);
       break;
+    case "migrate":
+      await cmdMigrate(positional, flags);
+      break;
     case "search":
       await cmdSearch(positional, flags);
       break;
@@ -936,6 +1016,7 @@ async function main(): Promise<void> {
           "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--cli-path PATH] [--json]   Manage the background indexing service\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--ui] [--plain] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--ui] [--plain] [--json]\n" +
+          "  migrate  [build|activate] [--db PATH] [--output PATH|--candidate PATH] [--keep-backup] [--json]   Build, verify, and explicitly activate a compact index\n" +
           "  stats    [--db PATH] [--ui] [--plain]              Show index statistics\n" +
           "  extract  [--db PATH] [--sessions DIR] [--since YYYY-MM-DD] [--project P] [--max N] [--dry-run] [--json]\n" +
           "  inbox    [--db PATH] [--status pending|approved|rejected|superseded] [--limit N] [--ui] [--plain] [--json]\n" +
