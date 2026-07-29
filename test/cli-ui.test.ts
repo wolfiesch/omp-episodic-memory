@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { test } from "node:test";
 
 import { openDb } from "../src/db.js";
+import {
+  DAEMON_LABEL,
+  defaultDaemonConfig,
+  detectPlatform,
+  renderLaunchdPlist,
+  renderSystemdUnit,
+} from "../src/daemon.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -100,4 +107,40 @@ test("daemon status exposes the resolved effective byte cap", async () => {
 
   const unlimited = await runCli(["daemon", "status", "--no-max-bytes", "--json"]);
   assert.equal(JSON.parse(unlimited.stdout).maxBytes, null);
+});
+
+test("daemon status reads custom and no-cap values from the installed service", async () => {
+  const platform = detectPlatform();
+  if (platform === "unsupported") return;
+
+  const home = mkdtempSync(join(tmpdir(), "omp-cli-daemon-status-"));
+  const servicePath =
+    platform === "launchd"
+      ? join(home, "Library", "LaunchAgents", `${DAEMON_LABEL}.plist`)
+      : join(home, ".config", "systemd", "user", `${DAEMON_LABEL}.service`);
+  mkdirSync(join(servicePath, ".."), { recursive: true });
+
+  try {
+    const custom = defaultDaemonConfig({ maxBytes: 54321 });
+    writeFileSync(
+      servicePath,
+      platform === "launchd"
+        ? renderLaunchdPlist(custom)
+        : renderSystemdUnit(custom),
+    );
+    const customStatus = await runCli(["daemon", "status", "--json"], { HOME: home });
+    assert.equal(JSON.parse(customStatus.stdout).maxBytes, 54321);
+
+    const unlimited = defaultDaemonConfig({ maxBytes: Number.MAX_SAFE_INTEGER });
+    writeFileSync(
+      servicePath,
+      platform === "launchd"
+        ? renderLaunchdPlist(unlimited)
+        : renderSystemdUnit(unlimited),
+    );
+    const unlimitedStatus = await runCli(["daemon", "status", "--json"], { HOME: home });
+    assert.equal(JSON.parse(unlimitedStatus.stdout).maxBytes, null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -148,6 +148,31 @@ WantedBy=default.target
 `;
 }
 
+export function parseDaemonMaxBytes(
+  serviceConfig: string,
+  platform: Exclude<DaemonPlatform, "unsupported">,
+): number | undefined {
+  const noMaxPattern =
+    platform === "launchd"
+      ? /<string>--no-max-bytes<\/string>/
+      : /(?:^|\s)--no-max-bytes(?:\s|$)/m;
+  if (noMaxPattern.test(serviceConfig)) return Number.MAX_SAFE_INTEGER;
+
+  const capMatch =
+    platform === "launchd"
+      ? serviceConfig.match(
+          /<string>--max-bytes<\/string>\s*<string>(\d+)<\/string>/,
+        )
+      : serviceConfig.match(
+          /(?:^|\s)--max-bytes\s+(?:"(\d+)"|(\d+))(?:\s|$)/m,
+        );
+  const rawCap = capMatch?.[1] ?? capMatch?.[2];
+  if (rawCap === undefined) return undefined;
+
+  const cap = Number(rawCap);
+  return Number.isSafeInteger(cap) && cap > 0 ? cap : undefined;
+}
+
 export interface InstallResult {
   platform: DaemonPlatform;
   path: string;

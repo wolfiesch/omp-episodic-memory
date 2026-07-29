@@ -10,6 +10,7 @@ import {
   detectPlatform,
   installDaemon,
   renderLaunchdPlist,
+  parseDaemonMaxBytes,
   renderSystemdUnit,
   rotateDaemonLog,
   xmlEscape,
@@ -161,4 +162,22 @@ test("rotateDaemonLog contains filesystem failures", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("parseDaemonMaxBytes reads custom caps from both service formats", () => {
+  const cfg = defaultDaemonConfig({ maxBytes: 12345 });
+  assert.equal(parseDaemonMaxBytes(renderLaunchdPlist(cfg), "launchd"), 12345);
+  assert.equal(parseDaemonMaxBytes(renderSystemdUnit(cfg), "systemd"), 12345);
+});
+
+test("parseDaemonMaxBytes reads explicit no-cap service configurations", () => {
+  const cfg = defaultDaemonConfig({ maxBytes: Number.MAX_SAFE_INTEGER });
+  assert.equal(
+    parseDaemonMaxBytes(renderLaunchdPlist(cfg), "launchd"),
+    Number.MAX_SAFE_INTEGER,
+  );
+  assert.equal(
+    parseDaemonMaxBytes(renderSystemdUnit(cfg), "systemd"),
+    Number.MAX_SAFE_INTEGER,
+  );
 });

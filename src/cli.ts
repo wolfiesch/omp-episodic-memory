@@ -37,7 +37,7 @@ import {
   activateCompactedDatabase,
   buildCompactedDatabase,
 } from "./migrate.js";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import {
   DAEMON_DEFAULT_MAX_BYTES,
@@ -47,6 +47,7 @@ import {
   detectPlatform,
   installDaemon,
   launchdPlistPath,
+  parseDaemonMaxBytes,
   rotateDaemonLog,
   systemdUnitPath,
   uninstallDaemon,
@@ -727,7 +728,7 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
   if (cliPath !== undefined) {
     overrides.cliPath = cliPath;
   }
-  const maxBytes = parseMaxBytes(flags, DAEMON_DEFAULT_MAX_BYTES);
+  const maxBytes = parseMaxBytes(flags);
   if (maxBytes !== undefined) {
     overrides.maxBytes = maxBytes;
   }
@@ -780,8 +781,19 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
   } else if (sub === "status") {
     const daemonPath = platform === "launchd" ? launchdPlistPath(config.label) : systemdUnitPath(config.label);
     const exists = existsSync(daemonPath);
+    let installedMaxBytes = config.maxBytes;
+    const hasCapOverride = flags.has("max-bytes") || flags.has("no-max-bytes");
+    if (exists && !hasCapOverride) {
+      try {
+        installedMaxBytes =
+          parseDaemonMaxBytes(readFileSync(daemonPath, "utf8"), platform) ??
+          installedMaxBytes;
+      } catch {
+        // A racing or unreadable service file falls back to the active default.
+      }
+    }
     const effectiveMaxBytes =
-      config.maxBytes === Number.MAX_SAFE_INTEGER ? null : config.maxBytes;
+      installedMaxBytes === Number.MAX_SAFE_INTEGER ? null : installedMaxBytes;
     if (isJson) {
       process.stdout.write(
         JSON.stringify({ platform, exists, path: daemonPath, maxBytes: effectiveMaxBytes }) + "\n",
