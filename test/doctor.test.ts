@@ -18,7 +18,7 @@ import { test } from "node:test";
 import Database from "better-sqlite3";
 
 import { classifyStorageHeadroom, runDoctor } from "../src/doctor.js";
-import type { DoctorCheck } from "../src/doctor.js";
+import type { DoctorCheck, DoctorOptions } from "../src/doctor.js";
 import { openDb } from "../src/db.js";
 import { ensureIndexStateTable } from "../src/indexer.js";
 
@@ -46,13 +46,7 @@ test("SQLite health accepts a healthy database with a vec0 table", async () => {
   assert.equal(build.status, 0, build.stderr);
 
   try {
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath: join(root, "missing.plist"),
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    const checks = await runDoctorIn(root);
     assert.deepEqual(getCheck(checks, "SQLite health"), {
       name: "SQLite health",
       status: "pass",
@@ -69,13 +63,7 @@ test("runDoctor reports every setup check without creating an index", async () =
   const dbPath = join(root, "index.db");
   mkdirSync(sessionsDir);
   try {
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath: join(root, "missing.plist"),
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    const checks = await runDoctorIn(root);
     assert.deepEqual(checks.map((check) => check.name), [
       "sessions directory",
       "storage headroom",
@@ -205,6 +193,24 @@ function getCheck(
   return check;
 }
 
+/**
+ * Run doctor entirely inside a temp root. Pinning the service and log paths
+ * keeps the daemon checks off the developer's real launchd/systemd install.
+ */
+async function runDoctorIn(
+  root: string,
+  overrides: Partial<DoctorOptions> = {},
+): Promise<DoctorCheck[]> {
+  return runDoctor({
+    dbPath: join(root, "index.db"),
+    sessionsDir: join(root, "sessions"),
+    servicePath: join(root, "missing.plist"),
+    daemonLogPath: join(root, "missing.log"),
+    daemonPlatform: "launchd",
+    ...overrides,
+  });
+}
+
 test("storage headroom classification honors fail and warning boundaries", () => {
   assert.equal(classifyStorageHeadroom(5 * GiB - 1, 100 * GiB), "fail");
   assert.equal(classifyStorageHeadroom(5 * GiB, 100 * GiB), "warn");
@@ -233,13 +239,7 @@ test("runDoctor reports healthy SQLite, source coverage, daemon cap, and log", a
   writeFileSync(daemonLogPath, "healthy\n");
 
   try {
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath,
-      daemonPlatform: "launchd",
-      daemonLogPath,
-    });
+    const checks = await runDoctorIn(root, { servicePath, daemonLogPath });
     assert.equal(getCheck(checks, "SQLite health").status, "pass");
     assert.equal(getCheck(checks, "SQLite health").detail, "quick_check: ok");
     assert.deepEqual(getCheck(checks, "source coverage"), {
@@ -264,13 +264,7 @@ test("runDoctor warns about deferred and failed source coverage", async () => {
   createCurrentDb(dbPath, ["indexed", "oversize", "oversize", "failed"]);
 
   try {
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath: join(root, "missing.plist"),
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    const checks = await runDoctorIn(root);
     assert.deepEqual(getCheck(checks, "source coverage"), {
       name: "source coverage",
       status: "warn",
@@ -298,13 +292,7 @@ test("runDoctor warns when indexed_files has the legacy schema", async () => {
 
   try {
     const before = readFileSync(dbPath);
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath: join(root, "missing.plist"),
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    const checks = await runDoctorIn(root);
     assert.equal(getCheck(checks, "SQLite health").status, "pass");
     assert.deepEqual(getCheck(checks, "index freshness"), {
       name: "index freshness",
@@ -332,13 +320,7 @@ test("runDoctor fails SQLite health for a corrupt database without changing it",
 
   try {
     const before = readFileSync(dbPath);
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath: join(root, "missing.plist"),
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    const checks = await runDoctorIn(root);
     assert.equal(getCheck(checks, "SQLite health").status, "fail");
     assert.match(getCheck(checks, "SQLite health").detail, /database|file/i);
     assert.deepEqual(readFileSync(dbPath), before);
@@ -350,7 +332,6 @@ test("runDoctor fails SQLite health for a corrupt database without changing it",
 test("runDoctor reports installed custom, unbounded, and legacy daemon configs", async () => {
   const root = mkdtempSync(join(tmpdir(), "omp-doctor-daemon-"));
   const sessionsDir = join(root, "sessions");
-  const dbPath = join(root, "index.db");
   const servicePath = join(root, "daemon.plist");
   mkdirSync(sessionsDir);
 
@@ -359,24 +340,12 @@ test("runDoctor reports installed custom, unbounded, and legacy daemon configs",
       servicePath,
       "<string>--max-bytes</string>\n<string>123456789</string>\n",
     );
-    let checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath,
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    let checks = await runDoctorIn(root, { servicePath });
     assert.equal(getCheck(checks, "installed daemon cap").status, "pass");
     assert.match(getCheck(checks, "installed daemon cap").detail, /117\.7 MiB/);
 
     writeFileSync(servicePath, "<string>--no-max-bytes</string>\n");
-    checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath,
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    checks = await runDoctorIn(root, { servicePath });
     assert.deepEqual(getCheck(checks, "installed daemon cap"), {
       name: "installed daemon cap",
       status: "pass",
@@ -384,13 +353,7 @@ test("runDoctor reports installed custom, unbounded, and legacy daemon configs",
     });
 
     writeFileSync(servicePath, "<string>watch</string>\n");
-    checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath,
-      daemonPlatform: "launchd",
-      daemonLogPath: join(root, "missing.log"),
-    });
+    checks = await runDoctorIn(root, { servicePath });
     assert.equal(getCheck(checks, "installed daemon cap").status, "warn");
     assert.match(getCheck(checks, "installed daemon cap").detail, /legacy/i);
   } finally {
@@ -401,20 +364,13 @@ test("runDoctor reports installed custom, unbounded, and legacy daemon configs",
 test("runDoctor classifies daemon log size at exact thresholds", async () => {
   const root = mkdtempSync(join(tmpdir(), "omp-doctor-log-"));
   const sessionsDir = join(root, "sessions");
-  const dbPath = join(root, "index.db");
   const daemonLogPath = join(root, "daemon.log");
   mkdirSync(sessionsDir);
   writeFileSync(daemonLogPath, "");
 
   async function statusAt(size: number): Promise<string> {
     truncateSync(daemonLogPath, size);
-    const checks = await runDoctor({
-      dbPath,
-      sessionsDir,
-      servicePath: join(root, "missing.plist"),
-      daemonPlatform: "launchd",
-      daemonLogPath,
-    });
+    const checks = await runDoctorIn(root, { daemonLogPath });
     return getCheck(checks, "daemon log size").status;
   }
 
@@ -430,18 +386,9 @@ test("runDoctor classifies daemon log size at exact thresholds", async () => {
 
 test("runDoctor warns for missing operational paths without creating them", async () => {
   const root = join(tmpdir(), `omp-doctor-absent-${process.pid}-${Date.now()}`);
-  const sessionsDir = join(root, "sessions");
   const dbPath = join(root, "state", "index.db");
-  const servicePath = join(root, "daemon.plist");
-  const daemonLogPath = join(root, "daemon.log");
 
-  const checks = await runDoctor({
-    dbPath,
-    sessionsDir,
-    servicePath,
-    daemonPlatform: "launchd",
-    daemonLogPath,
-  });
+  const checks = await runDoctorIn(root, { dbPath });
   assert.equal(getCheck(checks, "storage headroom").status, "warn");
   assert.match(getCheck(checks, "storage headroom").detail, /missing|cannot inspect/i);
   assert.equal(getCheck(checks, "SQLite health").status, "warn");

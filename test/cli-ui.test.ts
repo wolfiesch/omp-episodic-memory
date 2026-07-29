@@ -61,7 +61,6 @@ test("help advertises the setup command", async () => {
   assert.match(stderr, /setup\s+\[--db PATH\]/);
 });
 
-
 test("help advertises byte caps for index, watch, setup, and daemon install", async () => {
   const { stderr } = await runCli([]);
   assert.match(stderr, /setup\s+.*--max-bytes N\|--no-max-bytes/);
@@ -119,25 +118,20 @@ test("daemon status reads custom and no-cap values from the installed service", 
       ? join(home, "Library", "LaunchAgents", `${DAEMON_LABEL}.plist`)
       : join(home, ".config", "systemd", "user", `${DAEMON_LABEL}.service`);
   mkdirSync(join(servicePath, ".."), { recursive: true });
-
-  try {
-    const custom = defaultDaemonConfig({ maxBytes: 54321 });
+  const installCap = (maxBytes: number): void => {
+    const cfg = defaultDaemonConfig({ maxBytes });
     writeFileSync(
       servicePath,
-      platform === "launchd"
-        ? renderLaunchdPlist(custom)
-        : renderSystemdUnit(custom),
+      platform === "launchd" ? renderLaunchdPlist(cfg) : renderSystemdUnit(cfg),
     );
+  };
+
+  try {
+    installCap(54321);
     const customStatus = await runCli(["daemon", "status", "--json"], { HOME: home });
     assert.equal(JSON.parse(customStatus.stdout).maxBytes, 54321);
 
-    const unlimited = defaultDaemonConfig({ maxBytes: Number.MAX_SAFE_INTEGER });
-    writeFileSync(
-      servicePath,
-      platform === "launchd"
-        ? renderLaunchdPlist(unlimited)
-        : renderSystemdUnit(unlimited),
-    );
+    installCap(Number.MAX_SAFE_INTEGER);
     const unlimitedStatus = await runCli(["daemon", "status", "--json"], { HOME: home });
     assert.equal(JSON.parse(unlimitedStatus.stdout).maxBytes, null);
   } finally {

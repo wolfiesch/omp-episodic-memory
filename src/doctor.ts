@@ -52,25 +52,43 @@ const STORAGE_WARN_BYTES = 20 * GiB;
 const DAEMON_LOG_WARN_BYTES = 10 * MiB;
 const DAEMON_LOG_FAIL_BYTES = 50 * MiB;
 
+/**
+ * Classify free space and, when degraded, name how much to free. Thresholds
+ * are clamped to the volume size so a volume smaller than the absolute floors
+ * stays classifiable.
+ */
+function evaluateStorageHeadroom(
+  freeBytes: number,
+  totalBytes: number,
+): { status: DoctorCheck["status"]; advice: string } {
+  const measurable =
+    Number.isFinite(freeBytes) &&
+    Number.isFinite(totalBytes) &&
+    freeBytes >= 0 &&
+    totalBytes > 0;
+  const failThreshold = Math.min(STORAGE_FAIL_BYTES, totalBytes);
+  const warnThreshold = Math.min(
+    Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1),
+    totalBytes,
+  );
+
+  if (measurable && freeBytes < failThreshold) {
+    return {
+      status: "fail",
+      advice: `; free at least ${formatByteCount(failThreshold)} immediately`,
+    };
+  }
+  if (!measurable || freeBytes < warnThreshold) {
+    return { status: "warn", advice: `; free at least ${formatByteCount(warnThreshold)}` };
+  }
+  return { status: "pass", advice: "" };
+}
+
 export function classifyStorageHeadroom(
   freeBytes: number,
   totalBytes: number,
 ): DoctorCheck["status"] {
-  if (
-    !Number.isFinite(freeBytes) ||
-    !Number.isFinite(totalBytes) ||
-    freeBytes < 0 ||
-    totalBytes <= 0
-  ) {
-    return "warn";
-  }
-  const failThreshold = Math.min(STORAGE_FAIL_BYTES, totalBytes);
-  if (freeBytes < failThreshold) return "fail";
-  const warningThreshold = Math.min(
-    Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1),
-    totalBytes,
-  );
-  return freeBytes < warningThreshold ? "warn" : "pass";
+  return evaluateStorageHeadroom(freeBytes, totalBytes).status;
 }
 
 function formatByteCount(bytes: number): string {
@@ -142,22 +160,11 @@ function checkStorageHeadroom(dbPath: string, sessionsDir: string): DoctorCheck 
     const stats = statfsSync(storagePath);
     const freeBytes = stats.bavail * stats.bsize;
     const totalBytes = stats.blocks * stats.bsize;
-    const status = classifyStorageHeadroom(freeBytes, totalBytes);
-    const failThreshold = Math.min(STORAGE_FAIL_BYTES, totalBytes);
-    const warningThreshold = Math.min(
-      Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1),
-      totalBytes,
-    );
-    const threshold =
-      status === "fail"
-        ? `; free at least ${formatByteCount(failThreshold)} immediately`
-        : status === "warn"
-          ? `; free at least ${formatByteCount(warningThreshold)}`
-          : "";
+    const { status, advice } = evaluateStorageHeadroom(freeBytes, totalBytes);
     return {
       name: "storage headroom",
       status,
-      detail: `${formatByteCount(freeBytes)} free of ${formatByteCount(totalBytes)} on ${storagePath}${threshold}`,
+      detail: `${formatByteCount(freeBytes)} free of ${formatByteCount(totalBytes)} on ${storagePath}${advice}`,
     };
   } catch (error: unknown) {
     return {
@@ -289,10 +296,10 @@ function checkSourceCoverage(dbPath: string): DoctorCheck {
       };
     }
 
-    const columns = (
-      db.prepare(`PRAGMA table_info(indexed_files)`).all() as Array<{ name: string }>
-    ).map(({ name }) => name);
-    if (!columns.includes("outcome")) {
+    const columns = db
+      .prepare(`PRAGMA table_info(indexed_files)`)
+      .all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "outcome")) {
       return {
         name: "source coverage",
         status: "warn",
@@ -391,12 +398,9 @@ function checkDaemonLog(logPath: string): DoctorCheck {
 
   try {
     const size = statSync(logPath).size;
-    const status =
-      size >= DAEMON_LOG_FAIL_BYTES
-        ? "fail"
-        : size >= DAEMON_LOG_WARN_BYTES
-          ? "warn"
-          : "pass";
+    let status: DoctorCheck["status"] = "pass";
+    if (size >= DAEMON_LOG_FAIL_BYTES) status = "fail";
+    else if (size >= DAEMON_LOG_WARN_BYTES) status = "warn";
     return {
       name: "daemon log size",
       status,
@@ -418,72 +422,39 @@ function checkMcpServerEntry(): DoctorCheck {
     : { name: "MCP server entry", status: "warn", detail: "run `bun run build`" };
 }
 
+/**
+ * Run one check, degrading an unexpected throw into a reportable result so a
+ * single broken probe never hides the remaining diagnostics.
+ */
+function guarded(
+  name: string,
+  statusOnThrow: DoctorCheck["status"],
+  check: () => DoctorCheck,
+): DoctorCheck {
+  try {
+    return check();
+  } catch (error: unknown) {
+    return { name, status: statusOnThrow, detail: messageOf(error) };
+  }
+}
+
 export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorCheck[]> {
   const dbPath = opts.dbPath ?? DEFAULT_DB_PATH;
   const sessionsDir = opts.sessionsDir ?? DEFAULT_SESSIONS_DIR;
-  const checks: DoctorCheck[] = [];
 
-  try {
-    checks.push(checkSessionsDirectory(sessionsDir));
-  } catch (error: unknown) {
-    checks.push({ name: "sessions directory", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkStorageHeadroom(dbPath, sessionsDir));
-  } catch (error: unknown) {
-    checks.push({ name: "storage headroom", status: "warn", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkIndexDatabase(dbPath));
-  } catch (error: unknown) {
-    checks.push({ name: "index database", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkSqliteHealth(dbPath));
-  } catch (error: unknown) {
-    checks.push({ name: "SQLite health", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkSqliteVec());
-  } catch (error: unknown) {
-    checks.push({ name: "sqlite-vec extension", status: "fail", detail: messageOf(error) });
-  }
-
-  checks.push(await checkEmbeddingModel(opts.probeModel));
-
-  try {
-    checks.push(checkIndexFreshness(dbPath));
-  } catch (error: unknown) {
-    checks.push({ name: "index freshness", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkSourceCoverage(dbPath));
-  } catch (error: unknown) {
-    checks.push({ name: "source coverage", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkInstalledDaemonCap(opts.daemonPlatform ?? detectPlatform(), opts.servicePath));
-  } catch (error: unknown) {
-    checks.push({ name: "installed daemon cap", status: "warn", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkDaemonLog(opts.daemonLogPath ?? daemonLogPath()));
-  } catch (error: unknown) {
-    checks.push({ name: "daemon log size", status: "warn", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkMcpServerEntry());
-  } catch (error: unknown) {
-    checks.push({ name: "MCP server entry", status: "warn", detail: messageOf(error) });
-  }
-
-  return checks;
+  return [
+    guarded("sessions directory", "fail", () => checkSessionsDirectory(sessionsDir)),
+    guarded("storage headroom", "warn", () => checkStorageHeadroom(dbPath, sessionsDir)),
+    guarded("index database", "fail", () => checkIndexDatabase(dbPath)),
+    guarded("SQLite health", "fail", () => checkSqliteHealth(dbPath)),
+    guarded("sqlite-vec extension", "fail", checkSqliteVec),
+    await checkEmbeddingModel(opts.probeModel),
+    guarded("index freshness", "fail", () => checkIndexFreshness(dbPath)),
+    guarded("source coverage", "fail", () => checkSourceCoverage(dbPath)),
+    guarded("installed daemon cap", "warn", () =>
+      checkInstalledDaemonCap(opts.daemonPlatform ?? detectPlatform(), opts.servicePath),
+    ),
+    guarded("daemon log size", "warn", () => checkDaemonLog(opts.daemonLogPath ?? daemonLogPath())),
+    guarded("MCP server entry", "warn", checkMcpServerEntry),
+  ];
 }

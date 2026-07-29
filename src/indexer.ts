@@ -500,6 +500,18 @@ export class WatchFailureBackoff {
     }
   }
 
+  /**
+   * Take the pending "same error repeated N times" summary, if any, and clear
+   * the repeat counter.
+   */
+  private drainRepeatSummary(): string[] {
+    if (this.lastError === undefined || this.repeatedErrors === 0) return [];
+    const times = this.repeatedErrors === 1 ? "time" : "times";
+    const summary = `watchIndex: previous error repeated ${this.repeatedErrors} more ${times}`;
+    this.repeatedErrors = 0;
+    return [summary];
+  }
+
   failure(error: unknown): WatchBackoffResult {
     this.consecutiveFailures++;
     const delayMs = Math.min(
@@ -513,31 +525,15 @@ export class WatchFailureBackoff {
       return { delayMs, messages: [] };
     }
 
-    const messages: string[] = [];
-    if (this.lastError !== undefined && this.repeatedErrors > 0) {
-      messages.push(
-        `watchIndex: previous error repeated ${this.repeatedErrors} more ${
-          this.repeatedErrors === 1 ? "time" : "times"
-        }`,
-      );
-    }
+    const messages = this.drainRepeatSummary();
     messages.push(`watchIndex: cycle failed: ${errorText}`);
     this.lastError = errorText;
-    this.repeatedErrors = 0;
     return { delayMs, messages };
   }
 
   success(): WatchBackoffResult {
-    const messages: string[] = [];
-    if (this.lastError !== undefined && this.repeatedErrors > 0) {
-      messages.push(
-        `watchIndex: previous error repeated ${this.repeatedErrors} more ${
-          this.repeatedErrors === 1 ? "time" : "times"
-        }`,
-      );
-    }
+    const messages = this.drainRepeatSummary();
     this.consecutiveFailures = 0;
-    this.repeatedErrors = 0;
     this.lastError = undefined;
     return { delayMs: this.baseDelayMs, messages };
   }
@@ -575,19 +571,20 @@ export async function watchIndex(
   let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
+  const reportOutcome = (outcome: WatchBackoffResult): number => {
+    for (const message of outcome.messages) process.stderr.write(`${message}\n`);
+    return outcome.delayMs;
+  };
+
   const runCycle = async (): Promise<number> => {
     if (stopped || inFlight) return intervalMs;
     inFlight = true;
     try {
       const result = await indexAll({ ...opts, minStableMs });
       opts.onCycle?.({ ...result, at: Date.now() });
-      const recovery = failureBackoff.success();
-      for (const message of recovery.messages) process.stderr.write(`${message}\n`);
-      return recovery.delayMs;
+      return reportOutcome(failureBackoff.success());
     } catch (err) {
-      const failure = failureBackoff.failure(err);
-      for (const message of failure.messages) process.stderr.write(`${message}\n`);
-      return failure.delayMs;
+      return reportOutcome(failureBackoff.failure(err));
     } finally {
       inFlight = false;
     }

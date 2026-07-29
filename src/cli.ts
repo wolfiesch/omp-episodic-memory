@@ -41,8 +41,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import {
   DAEMON_DEFAULT_MAX_BYTES,
-  DAEMON_LOG_GENERATIONS,
-  DAEMON_LOG_MAX_BYTES,
   defaultDaemonConfig,
   detectPlatform,
   installDaemon,
@@ -110,30 +108,34 @@ function parseOptionalBoolean(value: string | undefined): boolean | undefined {
   throw new Error(`Expected true or false, got: ${value}`);
 }
 
+function parsePositiveInteger(
+  flags: Map<string, string>,
+  name: string,
+  defaultValue?: number,
+): number | undefined {
+  if (!flags.has(name)) return defaultValue;
+  const value = Number(flags.get(name));
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`--${name} must be a positive safe integer`);
+  }
+  return value;
+}
+
 function parseMaxBytes(
   flags: Map<string, string>,
   defaultValue?: number,
 ): number | undefined {
-  const hasMaxBytes = flags.has("max-bytes");
-  const hasNoMaxBytes = flags.has("no-max-bytes");
-  if (hasMaxBytes && hasNoMaxBytes) {
-    throw new Error("--max-bytes and --no-max-bytes cannot be used together");
-  }
-  if (hasNoMaxBytes) {
+  if (flags.has("no-max-bytes")) {
+    if (flags.has("max-bytes")) {
+      throw new Error("--max-bytes and --no-max-bytes cannot be used together");
+    }
     if (flags.get("no-max-bytes") !== "true") {
       throw new Error("--no-max-bytes does not accept a value");
     }
     return Number.MAX_SAFE_INTEGER;
   }
-  if (!hasMaxBytes) return defaultValue;
-
-  const maxBytes = Number(flags.get("max-bytes"));
-  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
-    throw new Error("--max-bytes must be a positive safe integer");
-  }
-  return maxBytes;
+  return parsePositiveInteger(flags, "max-bytes", defaultValue);
 }
-
 
 async function cmdIndex(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
@@ -187,14 +189,9 @@ async function cmdWatch(flags: Map<string, string>): Promise<void> {
   let rotationTimer: ReturnType<typeof setInterval> | undefined;
   const configuredLogPath = flags.get("daemon-log");
   if (configuredLogPath !== undefined) {
-    const threshold = Number(flags.get("daemon-log-max-bytes") ?? DAEMON_LOG_MAX_BYTES);
-    const generations = Number(flags.get("daemon-log-generations") ?? DAEMON_LOG_GENERATIONS);
-    if (!Number.isSafeInteger(threshold) || threshold <= 0) {
-      throw new Error("--daemon-log-max-bytes must be a positive safe integer");
-    }
-    if (!Number.isSafeInteger(generations) || generations <= 0) {
-      throw new Error("--daemon-log-generations must be a positive safe integer");
-    }
+    // Omitted flags fall through to rotateDaemonLog's own defaults.
+    const threshold = parsePositiveInteger(flags, "daemon-log-max-bytes");
+    const generations = parsePositiveInteger(flags, "daemon-log-generations");
     const rotate = (): void => {
       rotateDaemonLog(configuredLogPath, threshold, generations);
     };
@@ -781,9 +778,9 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
   } else if (sub === "status") {
     const daemonPath = platform === "launchd" ? launchdPlistPath(config.label) : systemdUnitPath(config.label);
     const exists = existsSync(daemonPath);
+    // An explicit --max-bytes/--no-max-bytes wins; otherwise report what is installed.
     let installedMaxBytes = config.maxBytes;
-    const hasCapOverride = flags.has("max-bytes") || flags.has("no-max-bytes");
-    if (exists && !hasCapOverride) {
+    if (exists && maxBytes === undefined) {
       try {
         installedMaxBytes =
           parseDaemonMaxBytes(readFileSync(daemonPath, "utf8"), platform) ??
