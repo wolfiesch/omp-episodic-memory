@@ -22,6 +22,47 @@ import type { DoctorCheck } from "../src/doctor.js";
 import { openDb } from "../src/db.js";
 import { ensureIndexStateTable } from "../src/indexer.js";
 
+test("SQLite health accepts a healthy database with a vec0 table", async () => {
+  const root = mkdtempSync(join(tmpdir(), "omp-doctor-vec-health-"));
+  const sessionsDir = join(root, "sessions");
+  const dbPath = join(root, "index.db");
+  mkdirSync(sessionsDir);
+  const build = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "--input-type=module",
+      "--eval",
+      `import Database from "better-sqlite3";
+       import * as sqliteVec from "sqlite-vec";
+       const db = new Database(${JSON.stringify(dbPath)});
+       sqliteVec.load(db);
+       db.exec("CREATE VIRTUAL TABLE vectors USING vec0(v float[4])");
+       db.close();`,
+    ],
+    { cwd: process.cwd(), encoding: "utf8" },
+  );
+  assert.equal(build.status, 0, build.stderr);
+
+  try {
+    const checks = await runDoctor({
+      dbPath,
+      sessionsDir,
+      servicePath: join(root, "missing.plist"),
+      daemonPlatform: "launchd",
+      daemonLogPath: join(root, "missing.log"),
+    });
+    assert.deepEqual(getCheck(checks, "SQLite health"), {
+      name: "SQLite health",
+      status: "pass",
+      detail: "quick_check: ok",
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runDoctor reports every setup check without creating an index", async () => {
   const root = mkdtempSync(join(tmpdir(), "omp-doctor-"));
   const sessionsDir = join(root, "sessions");
@@ -171,6 +212,10 @@ test("storage headroom classification honors fail and warning boundaries", () =>
   assert.equal(classifyStorageHeadroom(20 * GiB, 100 * GiB), "pass");
   assert.equal(classifyStorageHeadroom(30 * GiB - 1, 300 * GiB), "warn");
   assert.equal(classifyStorageHeadroom(30 * GiB, 300 * GiB), "pass");
+  assert.equal(classifyStorageHeadroom(4 * GiB, 4 * GiB), "pass");
+  assert.equal(classifyStorageHeadroom(4 * GiB - 1, 4 * GiB), "fail");
+  assert.equal(classifyStorageHeadroom(10 * GiB, 10 * GiB), "pass");
+  assert.equal(classifyStorageHeadroom(5 * GiB, 10 * GiB), "warn");
 });
 
 test("runDoctor reports healthy SQLite, source coverage, daemon cap, and log", async () => {
@@ -261,6 +306,12 @@ test("runDoctor warns when indexed_files has the legacy schema", async () => {
       daemonLogPath: join(root, "missing.log"),
     });
     assert.equal(getCheck(checks, "SQLite health").status, "pass");
+    assert.deepEqual(getCheck(checks, "index freshness"), {
+      name: "index freshness",
+      status: "warn",
+      detail:
+        "index schema outdated; run `omp-episodic migrate build`, stop the indexing daemon, then run `omp-episodic migrate activate`",
+    });
     assert.deepEqual(getCheck(checks, "source coverage"), {
       name: "source coverage",
       status: "warn",

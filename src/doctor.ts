@@ -64,8 +64,13 @@ export function classifyStorageHeadroom(
   ) {
     return "warn";
   }
-  if (freeBytes < STORAGE_FAIL_BYTES) return "fail";
-  return freeBytes < Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1) ? "warn" : "pass";
+  const failThreshold = Math.min(STORAGE_FAIL_BYTES, totalBytes);
+  if (freeBytes < failThreshold) return "fail";
+  const warningThreshold = Math.min(
+    Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1),
+    totalBytes,
+  );
+  return freeBytes < warningThreshold ? "warn" : "pass";
 }
 
 function formatByteCount(bytes: number): string {
@@ -138,10 +143,14 @@ function checkStorageHeadroom(dbPath: string, sessionsDir: string): DoctorCheck 
     const freeBytes = stats.bavail * stats.bsize;
     const totalBytes = stats.blocks * stats.bsize;
     const status = classifyStorageHeadroom(freeBytes, totalBytes);
-    const warningThreshold = Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1);
+    const failThreshold = Math.min(STORAGE_FAIL_BYTES, totalBytes);
+    const warningThreshold = Math.min(
+      Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1),
+      totalBytes,
+    );
     const threshold =
       status === "fail"
-        ? `; free at least ${formatByteCount(STORAGE_FAIL_BYTES)} immediately`
+        ? `; free at least ${formatByteCount(failThreshold)} immediately`
         : status === "warn"
           ? `; free at least ${formatByteCount(warningThreshold)}`
           : "";
@@ -188,6 +197,7 @@ function checkSqliteHealth(dbPath: string): DoctorCheck {
   let db: Database.Database | null = null;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    sqliteVec.load(db);
     const rows = db.pragma("quick_check(1)") as Array<Record<string, unknown>>;
     const result = rows[0] === undefined ? undefined : Object.values(rows[0])[0];
     if (result === "ok") {
@@ -243,7 +253,12 @@ function checkIndexFreshness(dbPath: string): DoctorCheck {
   } catch (error: unknown) {
     const message = messageOf(error);
     if (message.includes("Index DB schema is outdated")) {
-      return { name: "index freshness", status: "warn", detail: "index schema outdated; run `omp-episodic index --force`" };
+      return {
+        name: "index freshness",
+        status: "warn",
+        detail:
+          "index schema outdated; run `omp-episodic migrate build`, stop the indexing daemon, then run `omp-episodic migrate activate`",
+      };
     }
     return { name: "index freshness", status: "fail", detail: message };
   } finally {
