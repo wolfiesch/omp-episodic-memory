@@ -11,6 +11,7 @@ import { insertExchange, openDb, type InsertableExchange } from "../src/db.js";
 import {
   ensureIndexStateTable,
   findSessionFiles,
+  indexAll,
   matchesIgnore,
   pruneSourceExchanges,
   reconcileDeletedSources,
@@ -239,4 +240,41 @@ test("pruneSourceExchanges removes stale ordinals from every index table", () =>
     ).pluck().get(),
     0,
   );
+});
+
+test("indexAll marks oversized files so later cycles do not re-attempt them", async () => {
+  const sessionsDir = join(tmpdir(), `indexer-oversize-${randomUUID()}`);
+  mkdirSync(sessionsDir, { recursive: true });
+  const dbPath = join(sessionsDir, "index.db");
+  const sessionFile = join(
+    sessionsDir,
+    "2026-06-20T10-00-00-000Z_ffffffff-0000-7000-8000-00000000ffff.jsonl",
+  );
+  writeFileSync(sessionFile, `${"x".repeat(4096)}\n`);
+
+  try {
+    const first = await indexAll({ dbPath, sessionsDir, maxBytes: 1024 });
+    assert.equal(first.filesSkippedOversize, 1);
+
+    // The oversized file must be recorded, otherwise the watch loop re-attempts
+    // and re-logs it on every cycle for as long as the file exists.
+    const oversizeDb = openDb(dbPath);
+    try {
+      assert.equal(
+        oversizeDb
+          .prepare(`SELECT COUNT(*) FROM indexed_files WHERE path = ?`)
+          .pluck()
+          .get(sessionFile),
+        1,
+      );
+    } finally {
+      oversizeDb.close();
+    }
+
+    const second = await indexAll({ dbPath, sessionsDir, maxBytes: 1024 });
+    assert.equal(second.filesSkippedOversize, 0);
+    assert.equal(second.filesSkipped, 1);
+  } finally {
+    rmSync(sessionsDir, { recursive: true, force: true });
+  }
 });

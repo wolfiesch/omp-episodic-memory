@@ -292,6 +292,14 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
           err.message.startsWith("session file too large")
         ) {
           filesSkippedOversize++;
+          // Record the mtime even though nothing was indexed. Without this the
+          // file stays absent from `indexed_files`, so every watch cycle
+          // re-attempts it and re-emits this line forever (the daemon log grew
+          // to 111MB of duplicates). Marking it defers the retry until the file
+          // changes again; `--force` still re-attempts it.
+          runInTransaction(db, () => {
+            upsertMtime.run(file, mtimeMs, Date.now());
+          });
           process.stderr.write(`Skipping file ${file} as it is too large: ${err.message}\n`);
           continue;
         }
