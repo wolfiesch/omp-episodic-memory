@@ -40,12 +40,16 @@ import {
 import { existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import {
-  installDaemon,
-  uninstallDaemon,
+  DAEMON_DEFAULT_MAX_BYTES,
+  DAEMON_LOG_GENERATIONS,
+  DAEMON_LOG_MAX_BYTES,
   defaultDaemonConfig,
   detectPlatform,
+  installDaemon,
   launchdPlistPath,
+  rotateDaemonLog,
   systemdUnitPath,
+  uninstallDaemon,
   type DaemonConfig,
 } from "./daemon.js";
 import { formatToolEventSummary } from "./tool-events.js";
@@ -105,17 +109,36 @@ function parseOptionalBoolean(value: string | undefined): boolean | undefined {
   throw new Error(`Expected true or false, got: ${value}`);
 }
 
+function parseMaxBytes(
+  flags: Map<string, string>,
+  defaultValue?: number,
+): number | undefined {
+  const hasMaxBytes = flags.has("max-bytes");
+  const hasNoMaxBytes = flags.has("no-max-bytes");
+  if (hasMaxBytes && hasNoMaxBytes) {
+    throw new Error("--max-bytes and --no-max-bytes cannot be used together");
+  }
+  if (hasNoMaxBytes) {
+    if (flags.get("no-max-bytes") !== "true") {
+      throw new Error("--no-max-bytes does not accept a value");
+    }
+    return Number.MAX_SAFE_INTEGER;
+  }
+  if (!hasMaxBytes) return defaultValue;
+
+  const maxBytes = Number(flags.get("max-bytes"));
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("--max-bytes must be a positive safe integer");
+  }
+  return maxBytes;
+}
+
+
 async function cmdIndex(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const sessionsDir = flags.get("sessions");
   const maxFiles = flags.has("max") ? Number(flags.get("max")) : undefined;
-  // --no-max-bytes lifts the cap entirely (dogfood huge sessions); --max-bytes N overrides it.
-  const maxBytes =
-    flags.get("no-max-bytes") === "true"
-      ? Number.MAX_SAFE_INTEGER
-      : flags.has("max-bytes")
-        ? Number(flags.get("max-bytes"))
-        : undefined;
+  const maxBytes = parseMaxBytes(flags);
   process.stderr.write(`Indexing into ${dbPath}...\n`);
   const start = Date.now();
   const result = await indexAll({
@@ -142,12 +165,14 @@ async function cmdWatch(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const intervalMs = flags.has("interval") ? Number(flags.get("interval")) * 1000 : undefined;
   const stableMs = flags.has("stable") ? Number(flags.get("stable")) * 1000 : undefined;
+  const maxBytes = parseMaxBytes(flags, DAEMON_DEFAULT_MAX_BYTES);
   process.stderr.write(`Watching sessions; re-indexing into ${dbPath} (Ctrl-C to stop)...\n`);
   const { stop } = await watchIndex({
     dbPath,
     sessionsDir: flags.get("sessions"),
     intervalMs,
     stableMs,
+    maxBytes,
     onCycle: (r) => {
       if (r.filesProcessed > 0) {
         const at = new Date(r.at).toISOString().slice(11, 19);
@@ -157,8 +182,28 @@ async function cmdWatch(flags: Map<string, string>): Promise<void> {
       }
     },
   });
+
+  let rotationTimer: ReturnType<typeof setInterval> | undefined;
+  const configuredLogPath = flags.get("daemon-log");
+  if (configuredLogPath !== undefined) {
+    const threshold = Number(flags.get("daemon-log-max-bytes") ?? DAEMON_LOG_MAX_BYTES);
+    const generations = Number(flags.get("daemon-log-generations") ?? DAEMON_LOG_GENERATIONS);
+    if (!Number.isSafeInteger(threshold) || threshold <= 0) {
+      throw new Error("--daemon-log-max-bytes must be a positive safe integer");
+    }
+    if (!Number.isSafeInteger(generations) || generations <= 0) {
+      throw new Error("--daemon-log-generations must be a positive safe integer");
+    }
+    const rotate = (): void => {
+      rotateDaemonLog(configuredLogPath, threshold, generations);
+    };
+    rotate();
+    rotationTimer = setInterval(rotate, Math.min(intervalMs ?? 5000, 30_000));
+  }
+
   const shutdown = (): void => {
     stop();
+    clearInterval(rotationTimer);
     process.stderr.write("\nStopped.\n");
     process.exit(0);
   };
@@ -682,6 +727,10 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
   if (cliPath !== undefined) {
     overrides.cliPath = cliPath;
   }
+  const maxBytes = parseMaxBytes(flags, DAEMON_DEFAULT_MAX_BYTES);
+  if (maxBytes !== undefined) {
+    overrides.maxBytes = maxBytes;
+  }
 
   const config = defaultDaemonConfig(overrides);
 
@@ -731,11 +780,18 @@ function cmdDaemon(positional: string[], flags: Map<string, string>): void {
   } else if (sub === "status") {
     const daemonPath = platform === "launchd" ? launchdPlistPath(config.label) : systemdUnitPath(config.label);
     const exists = existsSync(daemonPath);
+    const effectiveMaxBytes =
+      config.maxBytes === Number.MAX_SAFE_INTEGER ? null : config.maxBytes;
     if (isJson) {
-      process.stdout.write(JSON.stringify({ platform, exists, path: daemonPath }) + "\n");
+      process.stdout.write(
+        JSON.stringify({ platform, exists, path: daemonPath, maxBytes: effectiveMaxBytes }) + "\n",
+      );
     } else {
       process.stderr.write(`Platform: ${platform}\n`);
       process.stderr.write(`Service file exists: ${exists} (path: ${daemonPath})\n`);
+      process.stderr.write(
+        `Effective max bytes: ${effectiveMaxBytes === null ? "unlimited" : effectiveMaxBytes}\n`,
+      );
     }
   } else {
     const msg = `Unknown daemon command: ${sub}`;
@@ -823,6 +879,7 @@ async function cmdMigrate(
 async function cmdSetup(flags: Map<string, string>): Promise<void> {
   const dbPath = flags.get("db") ?? DEFAULT_DB_PATH;
   const sessionsDir = flags.get("sessions");
+  const maxBytes = parseMaxBytes(flags, DAEMON_DEFAULT_MAX_BYTES);
 
   process.stdout.write("🚀 Starting omp-episodic-memory setup...\n");
 
@@ -830,12 +887,6 @@ async function cmdSetup(flags: Map<string, string>): Promise<void> {
   process.stdout.write("1. Indexing OMP session transcripts...\n");
   try {
     const maxFiles = flags.has("max") ? Number(flags.get("max")) : undefined;
-    const maxBytes =
-      flags.get("no-max-bytes") === "true"
-        ? Number.MAX_SAFE_INTEGER
-        : flags.has("max-bytes")
-          ? Number(flags.get("max-bytes"))
-          : undefined;
     const result = await indexAll({
       dbPath,
       sessionsDir,
@@ -867,6 +918,7 @@ async function cmdSetup(flags: Map<string, string>): Promise<void> {
   const overrides: Partial<DaemonConfig> = {};
   if (dbPath !== undefined) overrides.dbPath = dbPath;
   if (sessionsDir !== undefined) overrides.sessionsDir = sessionsDir;
+  if (maxBytes !== undefined) overrides.maxBytes = maxBytes;
   const interval = flags.get("interval");
   if (interval !== undefined) {
     const parsed = parseInt(interval, 10);
@@ -1010,10 +1062,11 @@ async function main(): Promise<void> {
       process.stderr.write(
         "omp-episodic <command>\n\n" +
           "Commands:\n" +
-          "  setup    [--db PATH] [--sessions DIR] [--max N] [--force] [--interval S] [--cli-path PATH]   One-command setup: build, index, and load daemon\n" +
+          "  setup    [--db PATH] [--sessions DIR] [--max N] [--force] [--interval S] [--cli-path PATH] [--max-bytes N|--no-max-bytes]   One-command setup: build, index, and load daemon\n" +
           "  index    [--db PATH] [--sessions DIR] [--max N] [--force] [--max-bytes N|--no-max-bytes]   Index OMP transcripts\n" +
-          "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S]   Background re-index loop\n" +
-          "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--cli-path PATH] [--json]   Manage the background indexing service\n" +
+          "  watch    [--db PATH] [--sessions DIR] [--interval S] [--stable S] [--max-bytes N|--no-max-bytes]   Background re-index loop\n" +
+          "  daemon   [install|uninstall|status] [--db PATH] [--sessions DIR] [--interval S] [--cli-path PATH] [--max-bytes N|--no-max-bytes] [--json]   Manage the background indexing service\n" +
+          "  Installed watch cap: 750 MiB. Use --no-max-bytes only as an explicit override.\n" +
           "  search   <query> [--mode both|vector|text] [--limit N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--ui] [--plain] [--json]\n" +
           "  recall   <task...> [--db PATH] [--project P] [--mode both|vector|text] [--tokens N] [--after D] [--before D] [--tool NAME] [--tool-error true|false] [--include a,b,c] [--ui] [--plain] [--json]\n" +
           "  migrate  [build|activate] [--db PATH] [--output PATH|--candidate PATH] [--keep-backup] [--json]   Build, verify, and explicitly activate a compact index\n" +

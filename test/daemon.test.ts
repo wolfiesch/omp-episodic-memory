@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
+  DAEMON_DEFAULT_MAX_BYTES,
+  daemonLogPath,
+  defaultDaemonConfig,
   detectPlatform,
+  installDaemon,
   renderLaunchdPlist,
   renderSystemdUnit,
-  defaultDaemonConfig,
-  installDaemon,
+  rotateDaemonLog,
   xmlEscape,
-  daemonLogPath,
 } from "../src/daemon.js";
 
 test("detectPlatform returns a valid platform literal", () => {
@@ -90,4 +95,70 @@ test("launchd plist still contains the log path string", () => {
   const plist = renderLaunchdPlist(cfg);
   const logPath = daemonLogPath();
   assert.ok(plist.includes(`<string>${xmlEscape(logPath)}</string>`));
+});
+
+test("daemon services preserve the default watch byte cap", () => {
+  const cfg = defaultDaemonConfig();
+  assert.equal(cfg.maxBytes, 750 * 1024 * 1024);
+  assert.equal(cfg.maxBytes, DAEMON_DEFAULT_MAX_BYTES);
+
+  const plist = renderLaunchdPlist(cfg);
+  assert.match(
+    plist,
+    new RegExp(`<string>--max-bytes</string>\\s*<string>${cfg.maxBytes}</string>`),
+  );
+
+  const unit = renderSystemdUnit(cfg);
+  assert.match(unit, new RegExp(`--max-bytes ${cfg.maxBytes}(?:\\s|$)`));
+});
+
+test("daemon services preserve the explicit no-max-bytes override", () => {
+  const cfg = defaultDaemonConfig({ maxBytes: Number.MAX_SAFE_INTEGER });
+  assert.match(renderLaunchdPlist(cfg), /<string>--no-max-bytes<\/string>/);
+  assert.match(renderSystemdUnit(cfg), /--no-max-bytes(?:\s|$)/);
+});
+
+test("launchd throttles restarts and enables user-level log rotation", () => {
+  const plist = renderLaunchdPlist(defaultDaemonConfig());
+  assert.match(plist, /<key>ThrottleInterval<\/key>\s*<integer>5<\/integer>/);
+  assert.match(
+    plist,
+    new RegExp(`<string>--daemon-log</string>\\s*<string>${xmlEscape(daemonLogPath())}</string>`),
+  );
+  assert.match(plist, /<string>--daemon-log-max-bytes<\/string>\s*<string>10485760<\/string>/);
+  assert.match(plist, /<string>--daemon-log-generations<\/string>\s*<string>5<\/string>/);
+  assert.match(renderSystemdUnit(defaultDaemonConfig()), /RestartSec=5/);
+});
+
+test("rotateDaemonLog retains bounded generations and active-descriptor writes", () => {
+  const root = mkdtempSync(join(tmpdir(), "omp-daemon-log-"));
+  const logPath = join(root, "daemon.log");
+  const fd = openSync(logPath, "a");
+
+  try {
+    for (let i = 0; i < 7; i++) {
+      writeSync(fd, `entry-${i}\n`);
+      assert.equal(rotateDaemonLog(logPath, 4, 5), true);
+    }
+    writeSync(fd, "active\n");
+
+    assert.equal(readFileSync(logPath, "utf8"), "active\n");
+    assert.equal(readFileSync(`${logPath}.1`, "utf8"), "entry-6\n");
+    assert.equal(readFileSync(`${logPath}.5`, "utf8"), "entry-2\n");
+    assert.equal(existsSync(`${logPath}.6`), false);
+  } finally {
+    closeSync(fd);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rotateDaemonLog contains filesystem failures", () => {
+  const root = mkdtempSync(join(tmpdir(), "omp-daemon-log-failure-"));
+  try {
+    assert.doesNotThrow(() => {
+      assert.equal(rotateDaemonLog(root, 1, 5), false);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

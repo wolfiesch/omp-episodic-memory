@@ -16,6 +16,8 @@ import {
   pruneSourceExchanges,
   reconcileDeletedSources,
   shouldIndexFile,
+  WatchFailureBackoff,
+  watchIndex,
 } from "../src/indexer.js";
 import { parseSessionFile } from "../src/parser.js";
 import { EMBEDDING_DIM } from "../src/types.js";
@@ -702,4 +704,88 @@ test("indexAll skips an unchanged successful source without advancing state", as
   } finally {
     rmSync(sessionsDir, { recursive: true, force: true });
   }
+});
+
+test("watchIndex applies maxBytes to its initial real indexing cycle", async () => {
+  const sessionsDir = join(tmpdir(), `indexer-watch-cap-${randomUUID()}`);
+  const watchDbPath = join(sessionsDir, "watch.db");
+  const sessionFile = join(
+    sessionsDir,
+    "2026-06-20T10-00-00-000Z_ffffffff-0000-7000-8000-00000000fff0.jsonl",
+  );
+  mkdirSync(sessionsDir, { recursive: true });
+  writeFileSync(sessionFile, "x".repeat(32));
+  let firstCycle:
+    | { filesProcessed: number; filesSkippedOversize: number }
+    | undefined;
+
+  try {
+    const watcher = await watchIndex({
+      dbPath: watchDbPath,
+      sessionsDir,
+      maxBytes: 8,
+      stableMs: 0,
+      intervalMs: 60_000,
+      onCycle: (result) => {
+        firstCycle = result;
+      },
+    });
+    watcher.stop();
+
+    assert.equal(firstCycle?.filesProcessed, 0);
+    assert.equal(firstCycle?.filesSkippedOversize, 1);
+    const stateDb = openDb(watchDbPath);
+    try {
+      const attemptedCap = stateDb
+        .prepare(`SELECT attempted_cap_bytes FROM indexed_files WHERE path = ?`)
+        .pluck()
+        .get(sessionFile);
+      assert.equal(attemptedCap, 8);
+    } finally {
+      stateDb.close();
+    }
+  } finally {
+    rmSync(sessionsDir, { recursive: true, force: true });
+  }
+});
+
+test("watch failure backoff grows exponentially, caps, and resets on success", () => {
+  const backoff = new WatchFailureBackoff(100, 900);
+
+  assert.deepEqual(backoff.failure(new Error("boom")), {
+    delayMs: 100,
+    messages: ["watchIndex: cycle failed: Error: boom"],
+  });
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 200);
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 400);
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 800);
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 900);
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 900);
+
+  assert.deepEqual(backoff.success(), {
+    delayMs: 100,
+    messages: ["watchIndex: previous error repeated 5 more times"],
+  });
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 100);
+});
+
+test("watch failure backoff suppresses duplicates and summarizes on change", () => {
+  const backoff = new WatchFailureBackoff(10);
+
+  const first = backoff.failure(new Error("same"));
+  const duplicate = backoff.failure(new Error("same"));
+  const changed = backoff.failure(new Error("different"));
+
+  assert.deepEqual(first.messages, ["watchIndex: cycle failed: Error: same"]);
+  assert.deepEqual(duplicate.messages, []);
+  assert.deepEqual(changed.messages, [
+    "watchIndex: previous error repeated 1 more time",
+    "watchIndex: cycle failed: Error: different",
+  ]);
+});
+
+test("watch failure backoff caps delays below a longer normal interval", () => {
+  const backoff = new WatchFailureBackoff(1_000, 900);
+  assert.equal(backoff.failure(new Error("boom")).delayMs, 900);
+  assert.equal(backoff.success().delayMs, 1_000);
 });

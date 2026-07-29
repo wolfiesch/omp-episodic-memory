@@ -478,6 +478,71 @@ export function isStable(
   return now - mtimeMs >= stableMs;
 }
 
+export interface WatchBackoffResult {
+  delayMs: number;
+  messages: string[];
+}
+
+export class WatchFailureBackoff {
+  private consecutiveFailures = 0;
+  private repeatedErrors = 0;
+  private lastError: string | undefined;
+
+  constructor(
+    private readonly baseDelayMs: number,
+    private readonly maxDelayMs = 15 * 60 * 1000,
+  ) {
+    if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) {
+      throw new Error("Watcher base delay must be positive");
+    }
+    if (!Number.isFinite(maxDelayMs) || maxDelayMs <= 0) {
+      throw new Error("Watcher maximum delay must be positive");
+    }
+  }
+
+  failure(error: unknown): WatchBackoffResult {
+    this.consecutiveFailures++;
+    const delayMs = Math.min(
+      this.baseDelayMs * 2 ** Math.min(this.consecutiveFailures - 1, 52),
+      this.maxDelayMs,
+    );
+    const errorText = String(error);
+
+    if (errorText === this.lastError) {
+      this.repeatedErrors++;
+      return { delayMs, messages: [] };
+    }
+
+    const messages: string[] = [];
+    if (this.lastError !== undefined && this.repeatedErrors > 0) {
+      messages.push(
+        `watchIndex: previous error repeated ${this.repeatedErrors} more ${
+          this.repeatedErrors === 1 ? "time" : "times"
+        }`,
+      );
+    }
+    messages.push(`watchIndex: cycle failed: ${errorText}`);
+    this.lastError = errorText;
+    this.repeatedErrors = 0;
+    return { delayMs, messages };
+  }
+
+  success(): WatchBackoffResult {
+    const messages: string[] = [];
+    if (this.lastError !== undefined && this.repeatedErrors > 0) {
+      messages.push(
+        `watchIndex: previous error repeated ${this.repeatedErrors} more ${
+          this.repeatedErrors === 1 ? "time" : "times"
+        }`,
+      );
+    }
+    this.consecutiveFailures = 0;
+    this.repeatedErrors = 0;
+    this.lastError = undefined;
+    return { delayMs: this.baseDelayMs, messages };
+  }
+}
+
 export interface WatchOptions extends IndexOptions {
   /** Polling interval between re-index cycles, in ms. Default 5000. */
   intervalMs?: number;
@@ -504,29 +569,35 @@ export async function watchIndex(
 ): Promise<{ stop: () => void }> {
   const intervalMs = opts.intervalMs ?? 5000;
   const minStableMs = opts.stableMs ?? 2000;
+  const failureBackoff = new WatchFailureBackoff(intervalMs);
 
   let stopped = false;
   let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const runCycle = async (): Promise<void> => {
-    if (stopped || inFlight) return;
+  const runCycle = async (): Promise<number> => {
+    if (stopped || inFlight) return intervalMs;
     inFlight = true;
     try {
       const result = await indexAll({ ...opts, minStableMs });
       opts.onCycle?.({ ...result, at: Date.now() });
+      const recovery = failureBackoff.success();
+      for (const message of recovery.messages) process.stderr.write(`${message}\n`);
+      return recovery.delayMs;
     } catch (err) {
-      process.stderr.write(`watchIndex: cycle failed: ${String(err)}\n`);
+      const failure = failureBackoff.failure(err);
+      for (const message of failure.messages) process.stderr.write(`${message}\n`);
+      return failure.delayMs;
     } finally {
       inFlight = false;
     }
   };
 
-  const schedule = (): void => {
+  const schedule = (delayMs: number): void => {
     if (stopped) return;
     timer = setTimeout(() => {
-      void runCycle().finally(schedule);
-    }, intervalMs);
+      void runCycle().then(schedule);
+    }, delayMs);
   };
 
   const stop = (): void => {
@@ -537,9 +608,8 @@ export async function watchIndex(
     }
   };
 
-  // Initial cycle immediately, then chain polling cycles.
-  await runCycle();
-  schedule();
+  // Initial cycle immediately, then chain polling cycles with failure backoff.
+  schedule(await runCycle());
 
   return { stop };
 }
