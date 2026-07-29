@@ -116,15 +116,40 @@ export interface IndexResult {
   exchangesUpserted: number;
 }
 
+type IndexedFileOutcome = "indexed" | "oversize" | "failed";
+
 interface IndexedFileRow {
   mtime_ms: number;
+  indexed_at: number;
+  outcome: IndexedFileOutcome | null;
+  size_bytes: number | null;
+  attempted_cap_bytes: number | null;
+  last_attempt_at: number | null;
+  last_success_at: number | null;
 }
 
-/** Create the table that tracks which files have been indexed and at what mtime. */
+const INDEX_STATE_COLUMNS = [
+  ["outcome", "TEXT"],
+  ["size_bytes", "INTEGER"],
+  ["attempted_cap_bytes", "INTEGER"],
+  ["last_attempt_at", "INTEGER"],
+  ["last_success_at", "INTEGER"],
+] as const;
+
+/** Create or migrate the durable per-source indexing state in place. */
 export function ensureIndexStateTable(db: Database.Database): void {
   db.exec(
     `CREATE TABLE IF NOT EXISTS indexed_files (path TEXT PRIMARY KEY, mtime_ms INTEGER NOT NULL, indexed_at INTEGER NOT NULL)`,
   );
+  const columns = new Set(
+    (db.prepare(`PRAGMA table_info(indexed_files)`).all() as Array<{ name: string }>)
+      .map(({ name }) => name),
+  );
+  for (const [name, type] of INDEX_STATE_COLUMNS) {
+    if (!columns.has(name)) {
+      db.exec(`ALTER TABLE indexed_files ADD COLUMN ${name} ${type}`);
+    }
+  }
 }
 
 function isWithinDirectory(path: string, directory: string): boolean {
@@ -212,12 +237,57 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
       files = files.slice(0, opts.maxFiles);
     }
 
-    const selectMtime = db.prepare(
-      `SELECT mtime_ms FROM indexed_files WHERE path = ?`,
+    const selectIndexState = db.prepare(
+      `SELECT mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+              last_attempt_at, last_success_at
+       FROM indexed_files WHERE path = ?`,
     );
-    const upsertMtime = db.prepare(
-      `INSERT INTO indexed_files (path, mtime_ms, indexed_at) VALUES (?,?,?)
-       ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, indexed_at=excluded.indexed_at`,
+    const upsertOversize = db.prepare(
+      `INSERT INTO indexed_files
+         (path, mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+          last_attempt_at, last_success_at)
+       VALUES (?, ?, ?, 'oversize', ?, ?, ?, NULL)
+       ON CONFLICT(path) DO UPDATE SET
+         mtime_ms=excluded.mtime_ms,
+         indexed_at=excluded.indexed_at,
+         outcome='oversize',
+         size_bytes=excluded.size_bytes,
+         attempted_cap_bytes=excluded.attempted_cap_bytes,
+         last_attempt_at=excluded.last_attempt_at`,
+    );
+    const upsertIndexed = db.prepare(
+      `INSERT INTO indexed_files
+         (path, mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+          last_attempt_at, last_success_at)
+       VALUES (?, ?, ?, 'indexed', ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         mtime_ms=excluded.mtime_ms,
+         indexed_at=excluded.indexed_at,
+         outcome='indexed',
+         size_bytes=excluded.size_bytes,
+         attempted_cap_bytes=excluded.attempted_cap_bytes,
+         last_attempt_at=excluded.last_attempt_at,
+         last_success_at=excluded.last_success_at`,
+    );
+    const upsertFailed = db.prepare(
+      `INSERT INTO indexed_files
+         (path, mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+          last_attempt_at, last_success_at)
+       VALUES (?, ?, ?, 'failed', ?, ?, ?, NULL)
+       ON CONFLICT(path) DO UPDATE SET
+         mtime_ms=excluded.mtime_ms,
+         indexed_at=excluded.indexed_at,
+         outcome='failed',
+         size_bytes=excluded.size_bytes,
+         attempted_cap_bytes=excluded.attempted_cap_bytes,
+         last_attempt_at=excluded.last_attempt_at`,
+    );
+    const classifyLegacyIndexed = db.prepare(
+      `UPDATE indexed_files
+       SET outcome='indexed',
+           size_bytes=?,
+           last_success_at=indexed_at
+       WHERE path=? AND outcome IS NULL`,
     );
     const selectContentHash = db.prepare(
       `SELECT content_hash
@@ -232,7 +302,10 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
     for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
       const file = files[fileIndex];
 
-      const mtimeMs = statSync(file).mtimeMs;
+      const stats = statSync(file);
+      const mtimeMs = stats.mtimeMs;
+      const sizeBytes = stats.size;
+      const maxBytes = opts.maxBytes ?? 200 * 1024 * 1024;
       if (
         opts.minStableMs !== undefined &&
         !isStable(mtimeMs, Date.now(), opts.minStableMs)
@@ -242,8 +315,48 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         filesSkipped++;
         continue;
       }
-      const storedRow = selectMtime.get(file) as IndexedFileRow | undefined;
-      if (!shouldIndexFile(storedRow?.mtime_ms, mtimeMs, opts.force)) {
+      const storedRow = selectIndexState.get(file) as IndexedFileRow | undefined;
+      const unchangedSource =
+        storedRow?.mtime_ms === mtimeMs &&
+        (storedRow.size_bytes === null || storedRow.size_bytes === sizeBytes);
+
+      if (sizeBytes > maxBytes) {
+        if (
+          storedRow?.outcome === "oversize" &&
+          storedRow.mtime_ms === mtimeMs &&
+          storedRow.size_bytes === sizeBytes
+        ) {
+          filesSkipped++;
+          continue;
+        }
+        const attemptedAt = Date.now();
+        runInTransaction(db, () => {
+          upsertOversize.run(
+            file,
+            mtimeMs,
+            attemptedAt,
+            sizeBytes,
+            maxBytes,
+            attemptedAt,
+          );
+        });
+        filesSkippedOversize++;
+        process.stderr.write(
+          `Skipping file ${file} as it is too large: session file too large: size ${sizeBytes} exceeds limit ${maxBytes}\n`,
+        );
+        continue;
+      }
+
+      const hasSuccessfulOutcome =
+        storedRow?.outcome === "indexed" || storedRow?.outcome === null;
+      if (
+        hasSuccessfulOutcome &&
+        unchangedSource &&
+        !shouldIndexFile(storedRow?.mtime_ms, mtimeMs, opts.force)
+      ) {
+        if (storedRow?.outcome === null) {
+          classifyLegacyIndexed.run(sizeBytes, file);
+        }
         filesSkipped++;
         continue;
       }
@@ -255,7 +368,7 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         // before embedding/upserting. The file mtime is marked only after the iterator
         // completes, so parse/embed failures never make a partial file look current.
         for await (const ex of iterateSessionFile(file, {
-          maxBytes: opts.maxBytes ?? 200 * 1024 * 1024,
+          maxBytes,
         })) {
           seenExchanges.push({
             sessionId: ex.sessionId,
@@ -283,6 +396,19 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
           );
           insertedForFile += inserted;
         }
+        const completedAt = Date.now();
+        runInTransaction(db, () => {
+          pruneSourceExchanges(db, file, seenExchanges);
+          upsertIndexed.run(
+            file,
+            mtimeMs,
+            completedAt,
+            sizeBytes,
+            maxBytes,
+            completedAt,
+            completedAt,
+          );
+        });
       } catch (err: unknown) {
         if (
           err &&
@@ -292,25 +418,35 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
           err.message.startsWith("session file too large")
         ) {
           filesSkippedOversize++;
-          // Record the mtime even though nothing was indexed. Without this the
-          // file stays absent from `indexed_files`, so every watch cycle
-          // re-attempts it and re-emits this line forever (the daemon log grew
-          // to 111MB of duplicates). Marking it defers the retry until the file
-          // changes again; `--force` still re-attempts it.
+          const currentStats = statSync(file);
+          const attemptedAt = Date.now();
           runInTransaction(db, () => {
-            upsertMtime.run(file, mtimeMs, Date.now());
+            upsertOversize.run(
+              file,
+              currentStats.mtimeMs,
+              attemptedAt,
+              currentStats.size,
+              maxBytes,
+              attemptedAt,
+            );
           });
           process.stderr.write(`Skipping file ${file} as it is too large: ${err.message}\n`);
           continue;
         }
+        const failedAt = Date.now();
+        runInTransaction(db, () => {
+          upsertFailed.run(
+            file,
+            mtimeMs,
+            failedAt,
+            sizeBytes,
+            maxBytes,
+            failedAt,
+          );
+        });
         throw err;
       }
 
-      pruneSourceExchanges(db, file, seenExchanges);
-
-      runInTransaction(db, () => {
-        upsertMtime.run(file, mtimeMs, Date.now());
-      });
 
       filesProcessed++;
       exchangesUpserted += insertedForFile;
