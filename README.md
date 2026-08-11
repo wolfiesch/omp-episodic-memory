@@ -292,7 +292,7 @@ gate floor in `src/bench.ts` to lock in the gain.
 
 ## MCP server
 
-The package ships a second binary, `omp-episodic-mcp` (`./dist/mcp-server.js`), that runs the MCP stdio server. Register it in any harness that speaks MCP (Claude Code, Codex, Oh My Pi).
+The package ships a second binary, `omp-episodic-mcp` (`./dist/mcp-server.js`), that runs the MCP stdio server. It uses the stable MCP 2.0 package, accepts the `2026-07-28` request envelope, retains legacy stdio compatibility, and can be registered in any harness that speaks MCP (Claude Code, Codex, Oh My Pi).
 
 Using the published package via `npx` (the `-p` flag selects the named bin, since it differs from the package name):
 
