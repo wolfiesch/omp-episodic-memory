@@ -14,7 +14,7 @@ import {
   activateCompactedDatabase,
   buildCompactedDatabase,
 } from "../src/migrate.js";
-import { parseToolEvents } from "../src/tool-events.js";
+import { compressToolEvents, parseToolEvents } from "../src/tool-events.js";
 import { EMBEDDING_DIM } from "../src/types.js";
 
 const cleanupPaths = new Set<string>();
@@ -36,7 +36,7 @@ afterEach(() => {
   cleanupPaths.clear();
 });
 
-function createLegacyDatabase(path: string): void {
+function createLegacyDatabase(path: string, compressedToolEvents = false): void {
   const db = new Database(path);
   sqliteVec.load(db);
   try {
@@ -94,7 +94,11 @@ function createLegacyDatabase(path: string): void {
               1780000000, 'Why did migration work?', 'Because the rebuild completed.',
               '["bash"]', ?, 'npm rebuild sqlite-vec MIGRATION_TOOL_SENTINEL')
     `);
-    insert.run(toolEvents);
+    insert.run(
+      compressedToolEvents
+        ? compressToolEvents(JSON.parse(toolEvents))
+        : toolEvents,
+    );
     db.prepare(`
       INSERT INTO exchanges_fts
         (rowid, user_text, assistant_text, tool_names, tool_event_text)
@@ -163,6 +167,24 @@ test("buildCompactedDatabase preserves rows while replacing duplicate payload st
     assert.ok(legacyColumns.some((column) => column.name === "tool_event_text"));
   } finally {
     legacy.close();
+  }
+});
+
+test("buildCompactedDatabase migrates already-compressed legacy tool events", async () => {
+  const sourcePath = tempDb("omp-migrate-compressed-source");
+  const outputPath = tempDb("omp-migrate-compressed-output");
+  createLegacyDatabase(sourcePath, true);
+
+  await buildCompactedDatabase({ sourcePath, outputPath });
+
+  const migrated = openReadOnlyDb(outputPath);
+  try {
+    const row = migrated.prepare(`SELECT tool_events FROM exchanges WHERE id = 1`).get() as {
+      tool_events: Buffer;
+    };
+    assert.equal(parseToolEvents(row.tool_events)[0]?.resultText, "MIGRATION_TOOL_SENTINEL");
+  } finally {
+    migrated.close();
   }
 });
 

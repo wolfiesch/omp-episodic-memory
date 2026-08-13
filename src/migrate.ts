@@ -7,6 +7,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { inflateSync } from "node:zlib";
 
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
@@ -86,8 +87,8 @@ function parseToolNames(raw: string | null): string[] {
 
 function parseLegacyToolEvents(raw: string | Buffer | null | undefined) {
   if (raw === null || raw === undefined) return [];
-  const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : raw;
-  const events = parseToolEvents(text);
+  const text = Buffer.isBuffer(raw) ? inflateSync(raw).toString("utf8") : raw;
+  const events = parseToolEvents(raw);
   if (events.length === 0 && text.trim() !== "" && text.trim() !== "[]") {
     throw new Error("Legacy exchange has invalid tool_events JSON");
   }
