@@ -4,7 +4,7 @@
 
 ### Local-first experience memory for coding agents.
 
-Index raw [Oh My Pi](https://github.com/can1357/oh-my-pi) session transcripts, then recall provenance-backed decisions, runbooks, and gotchas - without ever modifying OMP state.
+Index raw session transcripts ([Pi](https://github.com/badlogic/pi), [Oh My Pi](https://github.com/can1357/oh-my-pi)), then recall provenance-backed decisions, runbooks, and gotchas via MCP and CLI (Claude Code, Cursor, Pi, OMP) - without ever modifying agent state.
 
 [![CI](https://img.shields.io/github/actions/workflow/status/wolfiesch/omp-episodic-memory/ci.yml?branch=main&style=flat-square)](https://github.com/wolfiesch/omp-episodic-memory/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/omp-episodic-memory.svg?style=flat-square&color=cb3837)](https://www.npmjs.com/package/omp-episodic-memory)
