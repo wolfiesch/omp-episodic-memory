@@ -13,18 +13,35 @@ import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
-import { openDb, openReadOnlyDb } from "./db.js";
-import { initEmbeddings } from "./embeddings.js";
-import { parseSessionFile } from "./parser.js";
-import { search } from "./search.js";
-import { recallForTask, formatBundle } from "./recall.js";
-import { searchMemoryRecords, type MemoryRecord } from "./memory.js";
-import { getProjectContext, type ProjectContext } from "./blocks.js";
+import type { MemoryRecord } from "./memory.js";
+import type { ProjectContext } from "./blocks.js";
 import { DEFAULT_DB_PATH, DEFAULT_SESSIONS_DIR, type SearchHit } from "./types.js";
 import { formatToolEventSummary } from "./tool-events.js";
 
 const DB_PATH = process.env.OMP_EPISODIC_DB ?? DEFAULT_DB_PATH;
 const SESSIONS_ROOT = process.env.OMP_EPISODIC_SESSIONS_DIR ?? DEFAULT_SESSIONS_DIR;
+
+let dbReadyPromise: Promise<void> | null = null;
+
+/**
+ * Lazily runs index DB schema migration once on the first DB-backed tool call,
+ * ensuring older DB schemas are upgraded without paying migration cost on server boot.
+ */
+export async function ensureDbReady(dbPath: string = DB_PATH): Promise<void> {
+  if (!dbReadyPromise) {
+    dbReadyPromise = (async () => {
+      if (existsSync(dbPath)) {
+        try {
+          const { openDb } = await import("./db.js");
+          openDb(dbPath).close();
+        } catch (error) {
+          console.error("Schema migration skipped:", error instanceof Error ? error.message : String(error));
+        }
+      }
+    })();
+  }
+  return dbReadyPromise;
+}
 
 const SearchInputSchema = z
   .object({
@@ -156,13 +173,13 @@ function formatProjectContext(ctx: ProjectContext): string {
   return lines.join("\n").trim();
 }
 
-function formatConversation(
+async function formatConversation(
   path: string,
   startLine?: number,
   endLine?: number,
-): string {
+): Promise<string> {
+  const { parseSessionFile } = await import("./parser.js");
   const exchanges = parseSessionFile(path);
-  if (exchanges.length === 0) return `No exchanges parsed from ${path}.`;
   const header = exchanges[0];
   const out: string[] = [
     `# ${header.title ?? "OMP session"}`,
@@ -212,6 +229,9 @@ server.registerTool(
   },
   async (params): Promise<CallToolResult> => {
     try {
+      await ensureDbReady(DB_PATH);
+      const { openReadOnlyDb } = await import("./db.js");
+      const { search } = await import("./search.js");
       const db = openReadOnlyDb(DB_PATH);
       try {
         const hits = await search(db, {
@@ -252,7 +272,7 @@ server.registerTool(
       if (!existsSync(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const text = formatConversation(path, params.startLine, params.endLine);
+      const text = await formatConversation(path, params.startLine, params.endLine);
       return { content: [{ type: "text", text }] };
     } catch (error) {
       return { content: [{ type: "text", text: handleError(error) }], isError: true };
@@ -271,6 +291,9 @@ server.registerTool(
   },
   async (params): Promise<CallToolResult> => {
     try {
+      await ensureDbReady(DB_PATH);
+      const { openReadOnlyDb } = await import("./db.js");
+      const { recallForTask, formatBundle } = await import("./recall.js");
       const db = openReadOnlyDb(DB_PATH);
       try {
         const bundle = await recallForTask(db, {
@@ -309,6 +332,9 @@ server.registerTool(
   },
   async (params): Promise<CallToolResult> => {
     try {
+      await ensureDbReady(DB_PATH);
+      const { openReadOnlyDb } = await import("./db.js");
+      const { searchMemoryRecords } = await import("./memory.js");
       const db = openReadOnlyDb(DB_PATH);
       try {
         const records = searchMemoryRecords(db, {
@@ -343,6 +369,9 @@ server.registerTool(
   },
   async (params): Promise<CallToolResult> => {
     try {
+      await ensureDbReady(DB_PATH);
+      const { openReadOnlyDb } = await import("./db.js");
+      const { getProjectContext } = await import("./blocks.js");
       const db = openReadOnlyDb(DB_PATH);
       try {
         const context = getProjectContext(db, {
@@ -365,24 +394,13 @@ server.registerTool(
 
 async function main(): Promise<void> {
   console.error("omp-episodic-memory MCP server running via stdio");
-  // Migrate: if the index DB already exists, open it writable once so any
-  // schemas added in newer versions (memory/graph/blocks) are created before
-  // we serve read-only queries against pre-existing DBs.
-  if (existsSync(DB_PATH)) {
-    try {
-      openDb(DB_PATH).close();
-    } catch (error) {
-      console.error("Schema migration skipped:", error instanceof Error ? error.message : String(error));
-    }
-  }
-  void initEmbeddings().catch((error) => {
-    console.error("Embedding prewarm failed:", error instanceof Error ? error.message : String(error));
-  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch((error) => {
-  console.error("Server error:", error);
-  process.exit(1);
-});
+if (process.argv[1] && (process.argv[1].endsWith("mcp-server.js") || process.argv[1].endsWith("mcp-server.ts") || process.argv[1].endsWith("omp-episodic-mcp"))) {
+  main().catch((error) => {
+    console.error("Server error:", error);
+    process.exit(1);
+  });
+}
