@@ -16,6 +16,7 @@ import {
   runInTransaction,
   type InsertableExchange,
 } from "../src/db.js";
+import { ensureDbReady } from "../src/mcp-server.js";
 import { parseSessionFile } from "../src/parser.js";
 import { EMBEDDING_DIM, type Exchange } from "../src/types.js";
 import { parseToolEvents } from "../src/tool-events.js";
@@ -218,6 +219,33 @@ test("openReadOnlyDb reports old schema clearly", () => {
     openDb(path).close();
     const readonly = openReadOnlyDb(path);
     readonly.close();
+  } finally {
+    for (const suffix of ["", "-wal", "-shm"]) {
+      try {
+        unlinkSync(path + suffix);
+      } catch {
+        // ignore missing sidecar files
+      }
+    }
+  }
+});
+
+test("ensureDbReady lazily migrates legacy database before openReadOnlyDb", async () => {
+  const path = join(tmpdir(), "omp-epi-lazy-legacy-" + randomUUID() + ".db");
+  createLegacyDb(path);
+  try {
+    assert.throws(
+      () => openReadOnlyDb(path),
+      /Index DB schema is outdated/,
+    );
+    await ensureDbReady(path);
+    const readonly = openReadOnlyDb(path);
+    try {
+      assert.ok(tableColumns(readonly, "exchanges").includes("tool_events"));
+      assert.ok(tableColumns(readonly, "exchanges").includes("tool_event_text"));
+    } finally {
+      readonly.close();
+    }
   } finally {
     for (const suffix of ["", "-wal", "-shm"]) {
       try {
