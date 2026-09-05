@@ -26,13 +26,18 @@ import { formatToolEventSummary } from "./tool-events.js";
 const DB_PATH = process.env.OMP_EPISODIC_DB ?? DEFAULT_DB_PATH;
 const SESSIONS_ROOT = process.env.OMP_EPISODIC_SESSIONS_DIR ?? DEFAULT_SESSIONS_DIR;
 
+const DATE_FILTER_REGEX = /^\d{4}-\d{2}-\d{2}(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?)?$/;
+const DATE_FILTER_DESCRIPTION =
+  "Date filter: YYYY-MM-DD or ISO 8601 datetime (e.g. 2026-09-04 or 2026-09-04T20:00:00Z)";
+const DateFilterSchema = z.string().regex(DATE_FILTER_REGEX).describe(DATE_FILTER_DESCRIPTION);
+
 const SearchInputSchema = z
   .object({
     query: z.string().min(2),
     mode: z.enum(["vector", "text", "both"]).default("both"),
     limit: z.number().min(1).max(50).default(10),
-    after: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    before: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    after: DateFilterSchema.optional(),
+    before: DateFilterSchema.optional(),
     tool: z.string().optional(),
     tool_error: z.boolean().optional(),
     response_format: z.enum(["markdown", "json"]).default("markdown"),
@@ -54,8 +59,8 @@ const RecallInputSchema = z
     include: z.array(z.enum(["episodes", "memories", "runbooks", "gotchas", "decisions"])).optional(),
     mode: z.enum(["vector", "text", "both"]).default("both"),
     max_context_tokens: z.number().min(100).max(8000).default(2000),
-    after: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    before: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    after: DateFilterSchema.optional(),
+    before: DateFilterSchema.optional(),
     tool: z.string().optional(),
     tool_error: z.boolean().optional(),
     response_format: z.enum(["markdown", "json"]).default("markdown"),
