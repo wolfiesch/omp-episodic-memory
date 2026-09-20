@@ -1,3 +1,5 @@
+import { deflateSync, inflateSync } from "node:zlib";
+
 import type { ToolEvent } from "./types.js";
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -58,47 +60,109 @@ export function deriveExitCode(details: Record<string, unknown> | null, resultTe
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
+export interface ToolEventMetadata {
+  toolName: string;
+  isError: boolean | null;
+  exitCode: number | null;
+  filePaths: string[];
+  command: string | null;
+  resultExcerpt: string;
+}
+
 export function serializeToolEvents(events: ToolEvent[]): string {
   return JSON.stringify(events);
 }
 
-export function parseToolEvents(raw: string | null | undefined): ToolEvent[] {
-  if (raw == null || raw.trim() === "") return [];
+export function compressToolEvents(events: ToolEvent[]): Buffer {
+  return deflateSync(Buffer.from(serializeToolEvents(events), "utf8"), { level: 6 });
+}
+
+function decodeToolEvents(raw: string | Uint8Array): string {
+  if (typeof raw === "string") return raw;
+  return inflateSync(raw).toString("utf8");
+}
+
+/** Longest result snippet retained in the compact metadata column. */
+const RESULT_EXCERPT_CHARS = 512;
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+/** Parse JSON that is expected to hold an array; malformed input yields null. */
+function parseJsonArray(text: string): unknown[] | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(text);
   } catch {
-    return [];
+    return null;
   }
-  if (!Array.isArray(parsed)) return [];
+  return Array.isArray(parsed) ? parsed : null;
+}
+
+export function parseToolEvents(raw: string | Uint8Array | null | undefined): ToolEvent[] {
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) return [];
+  const parsed = parseJsonArray(decodeToolEvents(raw));
+  if (parsed === null) return [];
 
   const events: ToolEvent[] = [];
   for (const entry of parsed) {
     if (!isRecord(entry) || typeof entry.toolName !== "string") continue;
     const details = normalizeArguments(entry.details);
-    const args = normalizeArguments(entry.arguments);
     const resultText = typeof entry.resultText === "string" ? entry.resultText : null;
-    const filePaths = Array.isArray(entry.filePaths)
-      ? entry.filePaths.filter((path): path is string => typeof path === "string")
-      : [];
-    const command = typeof entry.command === "string" ? entry.command : null;
-    const exitCode = typeof entry.exitCode === "number" && Number.isInteger(entry.exitCode)
-      ? entry.exitCode
-      : deriveExitCode(details, resultText);
-
     events.push({
       callId: typeof entry.callId === "string" ? entry.callId : null,
       toolName: entry.toolName,
-      arguments: args,
+      arguments: normalizeArguments(entry.arguments),
       resultText,
       isError: typeof entry.isError === "boolean" ? entry.isError : null,
       details,
-      exitCode,
-      filePaths,
-      command,
+      exitCode: typeof entry.exitCode === "number" && Number.isInteger(entry.exitCode)
+        ? entry.exitCode
+        : deriveExitCode(details, resultText),
+      filePaths: asStringArray(entry.filePaths),
+      command: typeof entry.command === "string" ? entry.command : null,
     });
   }
   return events;
+}
+
+export function serializeToolEventMetadata(events: ToolEvent[]): string {
+  const metadata: ToolEventMetadata[] = events.map((event) => ({
+    toolName: event.toolName,
+    isError: event.isError,
+    exitCode: event.exitCode,
+    filePaths: event.filePaths,
+    command: event.command,
+    resultExcerpt:
+      event.resultText?.replace(/\s+/g, " ").trim().slice(0, RESULT_EXCERPT_CHARS) ?? "",
+  }));
+  return JSON.stringify(metadata);
+}
+
+export function parseToolEventMetadata(raw: string | null | undefined): ToolEventMetadata[] {
+  if (raw == null || raw.trim() === "") return [];
+  const parsed = parseJsonArray(raw);
+  if (parsed === null) return [];
+
+  const metadata: ToolEventMetadata[] = [];
+  for (const entry of parsed) {
+    if (!isRecord(entry) || typeof entry.toolName !== "string") continue;
+    metadata.push({
+      toolName: entry.toolName,
+      isError: typeof entry.isError === "boolean" ? entry.isError : null,
+      exitCode: typeof entry.exitCode === "number" && Number.isInteger(entry.exitCode)
+        ? entry.exitCode
+        : null,
+      filePaths: asStringArray(entry.filePaths),
+      command: typeof entry.command === "string" ? entry.command : null,
+      resultExcerpt: typeof entry.resultExcerpt === "string"
+        ? entry.resultExcerpt.slice(0, RESULT_EXCERPT_CHARS)
+        : "",
+    });
+  }
+  return metadata;
 }
 
 export function toolEventsIndexText(events: ToolEvent[]): string {

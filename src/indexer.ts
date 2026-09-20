@@ -1,18 +1,19 @@
 // Crawl OMP session transcripts, embed each exchange, and persist to the index DB.
 // All logging goes to stderr; progress is reported via the onProgress callback.
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import Database from "better-sqlite3";
 import {
+  deleteExchangesByIds,
   insertExchange,
   openDb,
+  prepareExchange,
   runInTransaction,
 } from "./db.js";
 import { embedExchange, initEmbeddings } from "./embeddings.js";
 import { isSessionFile, iterateSessionFile, parseSessionFile } from "./parser.js";
 import { DEFAULT_SESSIONS_DIR } from "./types.js";
-import { serializeToolEvents, toolEventsIndexText } from "./tool-events.js";
 
 function globToRegExp(pattern: string): RegExp {
   let glob = pattern;
@@ -115,15 +116,102 @@ export interface IndexResult {
   exchangesUpserted: number;
 }
 
+type IndexedFileOutcome = "indexed" | "oversize" | "failed";
+
 interface IndexedFileRow {
   mtime_ms: number;
+  indexed_at: number;
+  outcome: IndexedFileOutcome | null;
+  size_bytes: number | null;
+  attempted_cap_bytes: number | null;
+  last_attempt_at: number | null;
+  last_success_at: number | null;
 }
 
-/** Create the table that tracks which files have been indexed and at what mtime. */
+const INDEX_STATE_COLUMNS = [
+  ["outcome", "TEXT"],
+  ["size_bytes", "INTEGER"],
+  ["attempted_cap_bytes", "INTEGER"],
+  ["last_attempt_at", "INTEGER"],
+  ["last_success_at", "INTEGER"],
+] as const;
+
+/** Create or migrate the durable per-source indexing state in place. */
 export function ensureIndexStateTable(db: Database.Database): void {
   db.exec(
     `CREATE TABLE IF NOT EXISTS indexed_files (path TEXT PRIMARY KEY, mtime_ms INTEGER NOT NULL, indexed_at INTEGER NOT NULL)`,
   );
+  const columns = new Set(
+    (db.prepare(`PRAGMA table_info(indexed_files)`).all() as Array<{ name: string }>)
+      .map(({ name }) => name),
+  );
+  for (const [name, type] of INDEX_STATE_COLUMNS) {
+    if (!columns.has(name)) {
+      db.exec(`ALTER TABLE indexed_files ADD COLUMN ${name} ${type}`);
+    }
+  }
+}
+
+function isWithinDirectory(path: string, directory: string): boolean {
+  const relativePath = relative(resolve(directory), resolve(path));
+  return (
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  );
+}
+
+/**
+ * Remove exchanges whose previously indexed source file no longer exists.
+ * Only records beneath the active sessions root are eligible.
+ */
+export function reconcileDeletedSources(
+  db: Database.Database,
+  sessionsDir: string,
+): number {
+  ensureIndexStateTable(db);
+  const indexedPaths = db
+    .prepare(`SELECT path FROM indexed_files`)
+    .pluck()
+    .all() as string[];
+  const selectExchangeIds = db
+    .prepare(`SELECT id FROM exchanges WHERE source_path = ?`)
+    .pluck();
+  const deleteIndexedFile = db
+    .prepare(`DELETE FROM indexed_files WHERE path = ?`);
+  let deleted = 0;
+
+  for (const path of indexedPaths) {
+    if (!isWithinDirectory(path, sessionsDir) || existsSync(path)) continue;
+    deleted += deleteExchangesByIds(db, selectExchangeIds.all(path) as number[]);
+    deleteIndexedFile.run(path);
+  }
+  return deleted;
+}
+
+interface ExchangeOrdinalRow {
+  id: number;
+  session_id: string;
+  ordinal: number;
+}
+
+/** Remove rows left behind when a successfully parsed source file shrinks. */
+export function pruneSourceExchanges(
+  db: Database.Database,
+  sourcePath: string,
+  seen: ReadonlyArray<{ sessionId: string; ordinal: number }>,
+): number {
+  const seenKeys = new Set(
+    seen.map(({ sessionId, ordinal }) => `${sessionId}\0${ordinal}`),
+  );
+  const rows = db
+    .prepare(`SELECT id, session_id, ordinal FROM exchanges WHERE source_path = ?`)
+    .all(sourcePath) as ExchangeOrdinalRow[];
+  const staleRowids: number[] = [];
+  for (const row of rows) {
+    if (!seenKeys.has(`${row.session_id}\0${row.ordinal}`)) staleRowids.push(row.id);
+  }
+  return deleteExchangesByIds(db, staleRowids);
 }
 
 /** Decide whether a file needs (re)indexing given its stored vs current mtime. */
@@ -144,19 +232,65 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
     ensureIndexStateTable(db);
 
     let files = findSessionFiles(opts.sessionsDir);
+    reconcileDeletedSources(db, opts.sessionsDir ?? DEFAULT_SESSIONS_DIR);
     if (opts.maxFiles !== undefined) {
       files = files.slice(0, opts.maxFiles);
     }
 
-    const selectMtime = db.prepare(
-      `SELECT mtime_ms FROM indexed_files WHERE path = ?`,
+    const selectIndexState = db.prepare(
+      `SELECT mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+              last_attempt_at, last_success_at
+       FROM indexed_files WHERE path = ?`,
     );
-    const upsertMtime = db.prepare(
-      `INSERT INTO indexed_files (path, mtime_ms, indexed_at) VALUES (?,?,?)
-       ON CONFLICT(path) DO UPDATE SET mtime_ms=excluded.mtime_ms, indexed_at=excluded.indexed_at`,
+    const upsertOversize = db.prepare(
+      `INSERT INTO indexed_files
+         (path, mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+          last_attempt_at, last_success_at)
+       VALUES (?, ?, ?, 'oversize', ?, ?, ?, NULL)
+       ON CONFLICT(path) DO UPDATE SET
+         mtime_ms=excluded.mtime_ms,
+         indexed_at=excluded.indexed_at,
+         outcome='oversize',
+         size_bytes=excluded.size_bytes,
+         attempted_cap_bytes=excluded.attempted_cap_bytes,
+         last_attempt_at=excluded.last_attempt_at`,
     );
-    const selectContent = db.prepare(
-      `SELECT source_path, title, cwd, timestamp, user_text, assistant_text, tool_names, tool_events, tool_event_text
+    const upsertIndexed = db.prepare(
+      `INSERT INTO indexed_files
+         (path, mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+          last_attempt_at, last_success_at)
+       VALUES (?, ?, ?, 'indexed', ?, ?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET
+         mtime_ms=excluded.mtime_ms,
+         indexed_at=excluded.indexed_at,
+         outcome='indexed',
+         size_bytes=excluded.size_bytes,
+         attempted_cap_bytes=excluded.attempted_cap_bytes,
+         last_attempt_at=excluded.last_attempt_at,
+         last_success_at=excluded.last_success_at`,
+    );
+    const upsertFailed = db.prepare(
+      `INSERT INTO indexed_files
+         (path, mtime_ms, indexed_at, outcome, size_bytes, attempted_cap_bytes,
+          last_attempt_at, last_success_at)
+       VALUES (?, ?, ?, 'failed', ?, ?, ?, NULL)
+       ON CONFLICT(path) DO UPDATE SET
+         mtime_ms=excluded.mtime_ms,
+         indexed_at=excluded.indexed_at,
+         outcome='failed',
+         size_bytes=excluded.size_bytes,
+         attempted_cap_bytes=excluded.attempted_cap_bytes,
+         last_attempt_at=excluded.last_attempt_at`,
+    );
+    const classifyLegacyIndexed = db.prepare(
+      `UPDATE indexed_files
+       SET outcome='indexed',
+           size_bytes=?,
+           last_success_at=indexed_at
+       WHERE path=? AND outcome IS NULL`,
+    );
+    const selectContentHash = db.prepare(
+      `SELECT content_hash
        FROM exchanges WHERE session_id=? AND ordinal=?`,
     );
 
@@ -168,7 +302,10 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
     for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
       const file = files[fileIndex];
 
-      const mtimeMs = statSync(file).mtimeMs;
+      const stats = statSync(file);
+      const mtimeMs = stats.mtimeMs;
+      const sizeBytes = stats.size;
+      const maxBytes = opts.maxBytes ?? 200 * 1024 * 1024;
       if (
         opts.minStableMs !== undefined &&
         !isStable(mtimeMs, Date.now(), opts.minStableMs)
@@ -178,47 +315,72 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
         filesSkipped++;
         continue;
       }
-      const storedRow = selectMtime.get(file) as IndexedFileRow | undefined;
-      if (!shouldIndexFile(storedRow?.mtime_ms, mtimeMs, opts.force)) {
+      const storedRow = selectIndexState.get(file) as IndexedFileRow | undefined;
+      const unchangedSource =
+        storedRow?.mtime_ms === mtimeMs &&
+        (storedRow.size_bytes === null || storedRow.size_bytes === sizeBytes);
+
+      if (sizeBytes > maxBytes) {
+        if (
+          storedRow?.outcome === "oversize" &&
+          storedRow.mtime_ms === mtimeMs &&
+          storedRow.size_bytes === sizeBytes
+        ) {
+          filesSkipped++;
+          continue;
+        }
+        const attemptedAt = Date.now();
+        runInTransaction(db, () => {
+          upsertOversize.run(
+            file,
+            mtimeMs,
+            attemptedAt,
+            sizeBytes,
+            maxBytes,
+            attemptedAt,
+          );
+        });
+        filesSkippedOversize++;
+        process.stderr.write(
+          `Skipping file ${file} as it is too large: session file too large: size ${sizeBytes} exceeds limit ${maxBytes}\n`,
+        );
+        continue;
+      }
+
+      const hasSuccessfulOutcome =
+        storedRow?.outcome === "indexed" || storedRow?.outcome === null;
+      if (
+        hasSuccessfulOutcome &&
+        unchangedSource &&
+        !shouldIndexFile(storedRow?.mtime_ms, mtimeMs, opts.force)
+      ) {
+        if (storedRow?.outcome === null) {
+          classifyLegacyIndexed.run(sizeBytes, file);
+        }
         filesSkipped++;
         continue;
       }
 
       let insertedForFile = 0;
+      const seenExchanges: Array<{ sessionId: string; ordinal: number }> = [];
       try {
         // Consume exchanges incrementally: do not materialize a per-session Exchange[]
         // before embedding/upserting. The file mtime is marked only after the iterator
         // completes, so parse/embed failures never make a partial file look current.
         for await (const ex of iterateSessionFile(file, {
-          maxBytes: opts.maxBytes ?? 200 * 1024 * 1024,
+          maxBytes,
         })) {
-          const toolNamesJson = JSON.stringify(ex.toolNames);
-          const toolEventsJson = serializeToolEvents(ex.toolEvents);
-          const toolEventText = toolEventsIndexText(ex.toolEvents);
-          const existing = selectContent.get(ex.sessionId, ex.ordinal) as
-            | {
-                source_path: string;
-                title: string | null;
-                cwd: string | null;
-                timestamp: number;
-                user_text: string;
-                assistant_text: string | null;
-                tool_names: string | null;
-                tool_events: string | null;
-                tool_event_text: string | null;
-              }
+          seenExchanges.push({
+            sessionId: ex.sessionId,
+            ordinal: ex.ordinal,
+          });
+          const prepared = prepareExchange(ex);
+          const existing = selectContentHash.get(ex.sessionId, ex.ordinal) as
+            | { content_hash: Buffer }
             | undefined;
           if (
             existing !== undefined &&
-            existing.source_path === ex.sourcePath &&
-            existing.title === ex.title &&
-            existing.cwd === ex.cwd &&
-            existing.timestamp === ex.timestamp &&
-            existing.user_text === ex.userText &&
-            (existing.assistant_text ?? "") === ex.assistantText &&
-            (existing.tool_names ?? "[]") === toolNamesJson &&
-            (existing.tool_events ?? "[]") === toolEventsJson &&
-            (existing.tool_event_text ?? "") === toolEventText
+            existing.content_hash.equals(prepared.contentHash)
           ) {
             continue;
           }
@@ -230,10 +392,23 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
             ex.toolEvents,
           );
           const inserted = runInTransaction(db, () =>
-            insertExchange(db, { ...ex, embedding }) ? 1 : 0,
+            insertExchange(db, { ...ex, embedding }, prepared) ? 1 : 0,
           );
           insertedForFile += inserted;
         }
+        const completedAt = Date.now();
+        runInTransaction(db, () => {
+          pruneSourceExchanges(db, file, seenExchanges);
+          upsertIndexed.run(
+            file,
+            mtimeMs,
+            completedAt,
+            sizeBytes,
+            maxBytes,
+            completedAt,
+            completedAt,
+          );
+        });
       } catch (err: unknown) {
         if (
           err &&
@@ -243,15 +418,35 @@ export async function indexAll(opts: IndexOptions = {}): Promise<IndexResult> {
           err.message.startsWith("session file too large")
         ) {
           filesSkippedOversize++;
+          const currentStats = statSync(file);
+          const attemptedAt = Date.now();
+          runInTransaction(db, () => {
+            upsertOversize.run(
+              file,
+              currentStats.mtimeMs,
+              attemptedAt,
+              currentStats.size,
+              maxBytes,
+              attemptedAt,
+            );
+          });
           process.stderr.write(`Skipping file ${file} as it is too large: ${err.message}\n`);
           continue;
         }
+        const failedAt = Date.now();
+        runInTransaction(db, () => {
+          upsertFailed.run(
+            file,
+            mtimeMs,
+            failedAt,
+            sizeBytes,
+            maxBytes,
+            failedAt,
+          );
+        });
         throw err;
       }
 
-      runInTransaction(db, () => {
-        upsertMtime.run(file, mtimeMs, Date.now());
-      });
 
       filesProcessed++;
       exchangesUpserted += insertedForFile;
@@ -283,6 +478,67 @@ export function isStable(
   return now - mtimeMs >= stableMs;
 }
 
+export interface WatchBackoffResult {
+  delayMs: number;
+  messages: string[];
+}
+
+export class WatchFailureBackoff {
+  private consecutiveFailures = 0;
+  private repeatedErrors = 0;
+  private lastError: string | undefined;
+
+  constructor(
+    private readonly baseDelayMs: number,
+    private readonly maxDelayMs = 15 * 60 * 1000,
+  ) {
+    if (!Number.isFinite(baseDelayMs) || baseDelayMs <= 0) {
+      throw new Error("Watcher base delay must be positive");
+    }
+    if (!Number.isFinite(maxDelayMs) || maxDelayMs <= 0) {
+      throw new Error("Watcher maximum delay must be positive");
+    }
+  }
+
+  /**
+   * Take the pending "same error repeated N times" summary, if any, and clear
+   * the repeat counter.
+   */
+  private drainRepeatSummary(): string[] {
+    if (this.lastError === undefined || this.repeatedErrors === 0) return [];
+    const times = this.repeatedErrors === 1 ? "time" : "times";
+    const summary = `watchIndex: previous error repeated ${this.repeatedErrors} more ${times}`;
+    this.repeatedErrors = 0;
+    return [summary];
+  }
+
+  failure(error: unknown): WatchBackoffResult {
+    this.consecutiveFailures++;
+    const delayMs = Math.min(
+      this.baseDelayMs * 2 ** Math.min(this.consecutiveFailures - 1, 52),
+      this.maxDelayMs,
+    );
+    const errorText = String(error);
+
+    if (errorText === this.lastError) {
+      this.repeatedErrors++;
+      return { delayMs, messages: [] };
+    }
+
+    const messages = this.drainRepeatSummary();
+    messages.push(`watchIndex: cycle failed: ${errorText}`);
+    this.lastError = errorText;
+    return { delayMs, messages };
+  }
+
+  success(): WatchBackoffResult {
+    const messages = this.drainRepeatSummary();
+    this.consecutiveFailures = 0;
+    this.lastError = undefined;
+    return { delayMs: this.baseDelayMs, messages };
+  }
+}
+
 export interface WatchOptions extends IndexOptions {
   /** Polling interval between re-index cycles, in ms. Default 5000. */
   intervalMs?: number;
@@ -309,29 +565,36 @@ export async function watchIndex(
 ): Promise<{ stop: () => void }> {
   const intervalMs = opts.intervalMs ?? 5000;
   const minStableMs = opts.stableMs ?? 2000;
+  const failureBackoff = new WatchFailureBackoff(intervalMs);
 
   let stopped = false;
   let inFlight = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const runCycle = async (): Promise<void> => {
-    if (stopped || inFlight) return;
+  const reportOutcome = (outcome: WatchBackoffResult): number => {
+    for (const message of outcome.messages) process.stderr.write(`${message}\n`);
+    return outcome.delayMs;
+  };
+
+  const runCycle = async (): Promise<number> => {
+    if (stopped || inFlight) return intervalMs;
     inFlight = true;
     try {
       const result = await indexAll({ ...opts, minStableMs });
       opts.onCycle?.({ ...result, at: Date.now() });
+      return reportOutcome(failureBackoff.success());
     } catch (err) {
-      process.stderr.write(`watchIndex: cycle failed: ${String(err)}\n`);
+      return reportOutcome(failureBackoff.failure(err));
     } finally {
       inFlight = false;
     }
   };
 
-  const schedule = (): void => {
+  const schedule = (delayMs: number): void => {
     if (stopped) return;
     timer = setTimeout(() => {
-      void runCycle().finally(schedule);
-    }, intervalMs);
+      void runCycle().then(schedule);
+    }, delayMs);
   };
 
   const stop = (): void => {
@@ -342,9 +605,8 @@ export async function watchIndex(
     }
   };
 
-  // Initial cycle immediately, then chain polling cycles.
-  await runCycle();
-  schedule();
+  // Initial cycle immediately, then chain polling cycles with failure backoff.
+  schedule(await runCycle());
 
   return { stop };
 }

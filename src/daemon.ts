@@ -1,4 +1,13 @@
-import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -11,11 +20,15 @@ export interface DaemonConfig {
   dbPath: string;
   sessionsDir: string;
   intervalSec: number;
+  maxBytes: number;
   nodePath: string;
   cliPath: string;
 }
 
 export const DAEMON_LABEL = "gg.wolfie.omp-episodic";
+export const DAEMON_DEFAULT_MAX_BYTES = 750 * 1024 * 1024;
+export const DAEMON_LOG_MAX_BYTES = 10 * 1024 * 1024;
+export const DAEMON_LOG_GENERATIONS = 5;
 
 export function detectPlatform(): DaemonPlatform {
   if (process.platform === "darwin") {
@@ -50,32 +63,46 @@ export function xmlEscape(s: string): string {
 
 export function renderLaunchdPlist(cfg: DaemonConfig): string {
   const logPath = daemonLogPath();
+  const maxBytesArgument =
+    cfg.maxBytes === Number.MAX_SAFE_INTEGER
+      ? "\t\t<string>--no-max-bytes</string>"
+      : `\t\t<string>--max-bytes</string>
+\t\t<string>${xmlEscape(String(cfg.maxBytes))}</string>`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>Label</key>
-	<string>${xmlEscape(cfg.label)}</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>${xmlEscape(cfg.nodePath)}</string>
-		<string>${xmlEscape(cfg.cliPath)}</string>
-		<string>watch</string>
-		<string>--db</string>
-		<string>${xmlEscape(cfg.dbPath)}</string>
-		<string>--sessions</string>
-		<string>${xmlEscape(cfg.sessionsDir)}</string>
-		<string>--interval</string>
-		<string>${xmlEscape(String(cfg.intervalSec))}</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<true/>
-	<key>StandardOutPath</key>
-	<string>${xmlEscape(logPath)}</string>
-	<key>StandardErrorPath</key>
-	<string>${xmlEscape(logPath)}</string>
+\t<key>Label</key>
+\t<string>${xmlEscape(cfg.label)}</string>
+\t<key>ProgramArguments</key>
+\t<array>
+\t\t<string>${xmlEscape(cfg.nodePath)}</string>
+\t\t<string>${xmlEscape(cfg.cliPath)}</string>
+\t\t<string>watch</string>
+\t\t<string>--db</string>
+\t\t<string>${xmlEscape(cfg.dbPath)}</string>
+\t\t<string>--sessions</string>
+\t\t<string>${xmlEscape(cfg.sessionsDir)}</string>
+\t\t<string>--interval</string>
+\t\t<string>${xmlEscape(String(cfg.intervalSec))}</string>
+${maxBytesArgument}
+\t\t<string>--daemon-log</string>
+\t\t<string>${xmlEscape(logPath)}</string>
+\t\t<string>--daemon-log-max-bytes</string>
+\t\t<string>${DAEMON_LOG_MAX_BYTES}</string>
+\t\t<string>--daemon-log-generations</string>
+\t\t<string>${DAEMON_LOG_GENERATIONS}</string>
+\t</array>
+\t<key>RunAtLoad</key>
+\t<true/>
+\t<key>KeepAlive</key>
+\t<true/>
+\t<key>ThrottleInterval</key>
+\t<integer>5</integer>
+\t<key>StandardOutPath</key>
+\t<string>${xmlEscape(logPath)}</string>
+\t<key>StandardErrorPath</key>
+\t<string>${xmlEscape(logPath)}</string>
 </dict>
 </plist>
 `;
@@ -103,6 +130,9 @@ export function renderSystemdUnit(cfg: DaemonConfig): string {
     cfg.sessionsDir,
     "--interval",
     String(cfg.intervalSec),
+    ...(cfg.maxBytes === Number.MAX_SAFE_INTEGER
+      ? ["--no-max-bytes"]
+      : ["--max-bytes", String(cfg.maxBytes)]),
   ];
   const execStart = argv.map(systemdQuoteArg).join(" ");
   return `[Unit]
@@ -116,6 +146,31 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 `;
+}
+
+export function parseDaemonMaxBytes(
+  serviceConfig: string,
+  platform: Exclude<DaemonPlatform, "unsupported">,
+): number | undefined {
+  const noMaxPattern =
+    platform === "launchd"
+      ? /<string>--no-max-bytes<\/string>/
+      : /(?:^|\s)--no-max-bytes(?:\s|$)/m;
+  if (noMaxPattern.test(serviceConfig)) return Number.MAX_SAFE_INTEGER;
+
+  const capMatch =
+    platform === "launchd"
+      ? serviceConfig.match(
+          /<string>--max-bytes<\/string>\s*<string>(\d+)<\/string>/,
+        )
+      : serviceConfig.match(
+          /(?:^|\s)--max-bytes\s+(?:"(\d+)"|(\d+))(?:\s|$)/m,
+        );
+  const rawCap = capMatch?.[1] ?? capMatch?.[2];
+  if (rawCap === undefined) return undefined;
+
+  const cap = Number(rawCap);
+  return Number.isSafeInteger(cap) && cap > 0 ? cap : undefined;
 }
 
 export interface InstallResult {
@@ -185,6 +240,35 @@ export function uninstallDaemon(opts?: { label?: string }): {
   };
 }
 
+/**
+ * Rotate a launchd-owned log with copy-and-truncate semantics. Truncating the
+ * active inode keeps launchd's open file descriptor valid for later writes.
+ */
+export function rotateDaemonLog(
+  logPath: string = daemonLogPath(),
+  maxBytes: number = DAEMON_LOG_MAX_BYTES,
+  generations: number = DAEMON_LOG_GENERATIONS,
+): boolean {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || !Number.isSafeInteger(generations) || generations <= 0) {
+    return false;
+  }
+
+  try {
+    if (!existsSync(logPath) || statSync(logPath).size < maxBytes) return false;
+
+    rmSync(`${logPath}.${generations}`, { force: true });
+    for (let generation = generations - 1; generation >= 1; generation--) {
+      const source = `${logPath}.${generation}`;
+      if (existsSync(source)) renameSync(source, `${logPath}.${generation + 1}`);
+    }
+    copyFileSync(logPath, `${logPath}.1`);
+    truncateSync(logPath, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function defaultDaemonConfig(overrides?: Partial<DaemonConfig>): DaemonConfig {
   const defaultCliPath = process.argv[1] ?? join(dirname(fileURLToPath(import.meta.url)), "cli.js");
   return {
@@ -192,6 +276,7 @@ export function defaultDaemonConfig(overrides?: Partial<DaemonConfig>): DaemonCo
     dbPath: DEFAULT_DB_PATH,
     sessionsDir: DEFAULT_SESSIONS_DIR,
     intervalSec: 30,
+    maxBytes: DAEMON_DEFAULT_MAX_BYTES,
     nodePath: process.execPath,
     cliPath: defaultCliPath,
     ...overrides,

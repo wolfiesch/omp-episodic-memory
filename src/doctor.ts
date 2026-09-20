@@ -1,11 +1,27 @@
-import { accessSync, constants, existsSync, readdirSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  statfsSync,
+  statSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
 
+import {
+  daemonLogPath,
+  detectPlatform,
+  launchdPlistPath,
+  parseDaemonMaxBytes,
+  systemdUnitPath,
+} from "./daemon.js";
+import type { DaemonPlatform } from "./daemon.js";
 import { getStats, openReadOnlyDb } from "./db.js";
 import { initEmbeddings } from "./embeddings.js";
 import { DEFAULT_DB_PATH, DEFAULT_SESSIONS_DIR } from "./types.js";
@@ -20,10 +36,66 @@ export interface DoctorOptions {
   dbPath?: string;
   sessionsDir?: string;
   probeModel?: boolean;
+  daemonPlatform?: DaemonPlatform;
+  servicePath?: string;
+  daemonLogPath?: string;
 }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+const MiB = 1024 ** 2;
+const GiB = 1024 ** 3;
+const STORAGE_FAIL_BYTES = 5 * GiB;
+const STORAGE_WARN_BYTES = 20 * GiB;
+const DAEMON_LOG_WARN_BYTES = 10 * MiB;
+const DAEMON_LOG_FAIL_BYTES = 50 * MiB;
+
+/**
+ * Classify free space and, when degraded, name how much to free. Thresholds
+ * are clamped to the volume size so a volume smaller than the absolute floors
+ * stays classifiable.
+ */
+function evaluateStorageHeadroom(
+  freeBytes: number,
+  totalBytes: number,
+): { status: DoctorCheck["status"]; advice: string } {
+  const measurable =
+    Number.isFinite(freeBytes) &&
+    Number.isFinite(totalBytes) &&
+    freeBytes >= 0 &&
+    totalBytes > 0;
+  const failThreshold = Math.min(STORAGE_FAIL_BYTES, totalBytes);
+  const warnThreshold = Math.min(
+    Math.max(STORAGE_WARN_BYTES, totalBytes * 0.1),
+    totalBytes,
+  );
+
+  if (measurable && freeBytes < failThreshold) {
+    return {
+      status: "fail",
+      advice: `; free at least ${formatByteCount(failThreshold)} immediately`,
+    };
+  }
+  if (!measurable || freeBytes < warnThreshold) {
+    return { status: "warn", advice: `; free at least ${formatByteCount(warnThreshold)}` };
+  }
+  return { status: "pass", advice: "" };
+}
+
+export function classifyStorageHeadroom(
+  freeBytes: number,
+  totalBytes: number,
+): DoctorCheck["status"] {
+  return evaluateStorageHeadroom(freeBytes, totalBytes).status;
+}
+
+function formatByteCount(bytes: number): string {
+  if (bytes >= GiB) return `${(bytes / GiB).toFixed(1)} GiB`;
+  if (bytes >= MiB) return `${(bytes / MiB).toFixed(1)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
 }
 
 function packageRoot(): string {
@@ -73,6 +145,36 @@ async function checkEmbeddingModel(probeModel: boolean | undefined): Promise<Doc
   };
 }
 
+function checkStorageHeadroom(dbPath: string, sessionsDir: string): DoctorCheck {
+  const dbStoragePath = existsSync(dbPath) ? dbPath : dirname(dbPath);
+  const storagePath = [dbStoragePath, sessionsDir].find((candidate) => existsSync(candidate));
+  if (storagePath === undefined) {
+    return {
+      name: "storage headroom",
+      status: "warn",
+      detail: `cannot inspect storage; DB directory ${dirname(dbPath)} and sessions directory ${sessionsDir} are missing`,
+    };
+  }
+
+  try {
+    const stats = statfsSync(storagePath);
+    const freeBytes = stats.bavail * stats.bsize;
+    const totalBytes = stats.blocks * stats.bsize;
+    const { status, advice } = evaluateStorageHeadroom(freeBytes, totalBytes);
+    return {
+      name: "storage headroom",
+      status,
+      detail: `${formatByteCount(freeBytes)} free of ${formatByteCount(totalBytes)} on ${storagePath}${advice}`,
+    };
+  } catch (error: unknown) {
+    return {
+      name: "storage headroom",
+      status: "warn",
+      detail: `cannot inspect ${storagePath}: ${messageOf(error)}`,
+    };
+  }
+}
+
 function checkSessionsDirectory(sessionsDir: string): DoctorCheck {
   return existsSync(sessionsDir)
     ? { name: "sessions directory", status: "pass", detail: sessionsDir }
@@ -88,6 +190,40 @@ function checkIndexDatabase(dbPath: string): DoctorCheck {
   return existsSync(dbPath)
     ? { name: "index database", status: "pass", detail: dbPath }
     : { name: "index database", status: "warn", detail: "not yet created; run `omp-episodic index`" };
+}
+
+function checkSqliteHealth(dbPath: string): DoctorCheck {
+  if (!existsSync(dbPath)) {
+    return {
+      name: "SQLite health",
+      status: "warn",
+      detail: "database not found; run `omp-episodic index`",
+    };
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    sqliteVec.load(db);
+    const rows = db.pragma("quick_check(1)") as Array<Record<string, unknown>>;
+    const result = rows[0] === undefined ? undefined : Object.values(rows[0])[0];
+    if (result === "ok") {
+      return { name: "SQLite health", status: "pass", detail: "quick_check: ok" };
+    }
+    return {
+      name: "SQLite health",
+      status: "fail",
+      detail: `quick_check: ${result === undefined ? "no result" : String(result)}`,
+    };
+  } catch (error: unknown) {
+    return {
+      name: "SQLite health",
+      status: "fail",
+      detail: `cannot open or check database: ${messageOf(error)}`,
+    };
+  } finally {
+    db?.close();
+  }
 }
 
 function checkSqliteVec(): DoctorCheck {
@@ -124,11 +260,158 @@ function checkIndexFreshness(dbPath: string): DoctorCheck {
   } catch (error: unknown) {
     const message = messageOf(error);
     if (message.includes("Index DB schema is outdated")) {
-      return { name: "index freshness", status: "warn", detail: "index schema outdated; run `omp-episodic index --force`" };
+      return {
+        name: "index freshness",
+        status: "warn",
+        detail:
+          "index schema outdated; run `omp-episodic migrate build`, stop the indexing daemon, then run `omp-episodic migrate activate`",
+      };
     }
     return { name: "index freshness", status: "fail", detail: message };
   } finally {
     db?.close();
+  }
+}
+
+function checkSourceCoverage(dbPath: string): DoctorCheck {
+  if (!existsSync(dbPath)) {
+    return {
+      name: "source coverage",
+      status: "warn",
+      detail: "database not found; run `omp-episodic index`",
+    };
+  }
+
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    const tableExists = db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'indexed_files'`)
+      .get() !== undefined;
+    if (!tableExists) {
+      return {
+        name: "source coverage",
+        status: "warn",
+        detail: "indexed_files state missing; run `omp-episodic index`",
+      };
+    }
+
+    const columns = db
+      .prepare(`PRAGMA table_info(indexed_files)`)
+      .all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "outcome")) {
+      return {
+        name: "source coverage",
+        status: "warn",
+        detail: "legacy indexed_files schema; run `omp-episodic index` to record outcomes",
+      };
+    }
+
+    const rows = db
+      .prepare(`SELECT outcome, COUNT(*) AS count FROM indexed_files GROUP BY outcome`)
+      .all() as Array<{ outcome: string | null; count: number }>;
+    let indexed = 0;
+    let oversize = 0;
+    let failed = 0;
+    let unclassified = 0;
+    for (const row of rows) {
+      if (row.outcome === "indexed") indexed = row.count;
+      else if (row.outcome === "oversize") oversize = row.count;
+      else if (row.outcome === "failed") failed = row.count;
+      else unclassified += row.count;
+    }
+    const detail =
+      `indexed ${indexed}, oversize ${oversize}, failed ${failed}` +
+      (unclassified === 0 ? "" : `, unclassified ${unclassified}`);
+    return {
+      name: "source coverage",
+      status: oversize === 0 && failed === 0 && unclassified === 0 ? "pass" : "warn",
+      detail,
+    };
+  } catch (error: unknown) {
+    return {
+      name: "source coverage",
+      status: "fail",
+      detail: `cannot inspect source outcomes: ${messageOf(error)}`,
+    };
+  } finally {
+    db?.close();
+  }
+}
+
+function checkInstalledDaemonCap(
+  platform: DaemonPlatform,
+  servicePathOverride: string | undefined,
+): DoctorCheck {
+  if (platform === "unsupported") {
+    return {
+      name: "installed daemon cap",
+      status: "warn",
+      detail: `unsupported platform: ${process.platform}`,
+    };
+  }
+  const servicePath =
+    servicePathOverride ??
+    (platform === "launchd" ? launchdPlistPath() : systemdUnitPath());
+  if (!existsSync(servicePath)) {
+    return {
+      name: "installed daemon cap",
+      status: "warn",
+      detail: `service not installed at ${servicePath}`,
+    };
+  }
+
+  try {
+    const cap = parseDaemonMaxBytes(readFileSync(servicePath, "utf8"), platform);
+    if (cap === undefined) {
+      return {
+        name: "installed daemon cap",
+        status: "warn",
+        detail: "legacy service has no safe cap; reinstall with `omp-episodic daemon install`",
+      };
+    }
+    return {
+      name: "installed daemon cap",
+      status: "pass",
+      detail:
+        cap === Number.MAX_SAFE_INTEGER
+          ? "unbounded (--no-max-bytes)"
+          : `${formatByteCount(cap)} (${cap} bytes)`,
+    };
+  } catch (error: unknown) {
+    return {
+      name: "installed daemon cap",
+      status: "warn",
+      detail: `cannot read ${servicePath}: ${messageOf(error)}`,
+    };
+  }
+}
+
+function checkDaemonLog(logPath: string): DoctorCheck {
+  if (!existsSync(logPath)) {
+    return {
+      name: "daemon log size",
+      status: "warn",
+      detail: `log not found at ${logPath}`,
+    };
+  }
+
+  try {
+    const size = statSync(logPath).size;
+    let status: DoctorCheck["status"] = "pass";
+    if (size >= DAEMON_LOG_FAIL_BYTES) status = "fail";
+    else if (size >= DAEMON_LOG_WARN_BYTES) status = "warn";
+    return {
+      name: "daemon log size",
+      status,
+      detail: `${formatByteCount(size)} at ${logPath}`,
+    };
+  } catch (error: unknown) {
+    return {
+      name: "daemon log size",
+      status: "warn",
+      detail: `cannot inspect ${logPath}: ${messageOf(error)}`,
+    };
   }
 }
 
@@ -139,42 +422,39 @@ function checkMcpServerEntry(): DoctorCheck {
     : { name: "MCP server entry", status: "warn", detail: "run `bun run build`" };
 }
 
+/**
+ * Run one check, degrading an unexpected throw into a reportable result so a
+ * single broken probe never hides the remaining diagnostics.
+ */
+function guarded(
+  name: string,
+  statusOnThrow: DoctorCheck["status"],
+  check: () => DoctorCheck,
+): DoctorCheck {
+  try {
+    return check();
+  } catch (error: unknown) {
+    return { name, status: statusOnThrow, detail: messageOf(error) };
+  }
+}
+
 export async function runDoctor(opts: DoctorOptions = {}): Promise<DoctorCheck[]> {
   const dbPath = opts.dbPath ?? DEFAULT_DB_PATH;
   const sessionsDir = opts.sessionsDir ?? DEFAULT_SESSIONS_DIR;
-  const checks: DoctorCheck[] = [];
 
-  try {
-    checks.push(checkSessionsDirectory(sessionsDir));
-  } catch (error: unknown) {
-    checks.push({ name: "sessions directory", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkIndexDatabase(dbPath));
-  } catch (error: unknown) {
-    checks.push({ name: "index database", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkSqliteVec());
-  } catch (error: unknown) {
-    checks.push({ name: "sqlite-vec extension", status: "fail", detail: messageOf(error) });
-  }
-
-  checks.push(await checkEmbeddingModel(opts.probeModel));
-
-  try {
-    checks.push(checkIndexFreshness(dbPath));
-  } catch (error: unknown) {
-    checks.push({ name: "index freshness", status: "fail", detail: messageOf(error) });
-  }
-
-  try {
-    checks.push(checkMcpServerEntry());
-  } catch (error: unknown) {
-    checks.push({ name: "MCP server entry", status: "warn", detail: messageOf(error) });
-  }
-
-  return checks;
+  return [
+    guarded("sessions directory", "fail", () => checkSessionsDirectory(sessionsDir)),
+    guarded("storage headroom", "warn", () => checkStorageHeadroom(dbPath, sessionsDir)),
+    guarded("index database", "fail", () => checkIndexDatabase(dbPath)),
+    guarded("SQLite health", "fail", () => checkSqliteHealth(dbPath)),
+    guarded("sqlite-vec extension", "fail", checkSqliteVec),
+    await checkEmbeddingModel(opts.probeModel),
+    guarded("index freshness", "fail", () => checkIndexFreshness(dbPath)),
+    guarded("source coverage", "fail", () => checkSourceCoverage(dbPath)),
+    guarded("installed daemon cap", "warn", () =>
+      checkInstalledDaemonCap(opts.daemonPlatform ?? detectPlatform(), opts.servicePath),
+    ),
+    guarded("daemon log size", "warn", () => checkDaemonLog(opts.daemonLogPath ?? daemonLogPath())),
+    guarded("MCP server entry", "warn", checkMcpServerEntry),
+  ];
 }
