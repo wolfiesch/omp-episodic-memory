@@ -801,8 +801,31 @@ Done! Index size: 2.4 MB.
       <p class="text-xs text-zinc-700 mt-2">
         π mark derived from the <a href="https://github.com/can1357/oh-my-pi" target="_blank" rel="noopener" class="text-zinc-500 hover:text-brand-cyan transition-colors">Oh My Pi</a> logo (MIT) - see <a href="THIRD_PARTY_NOTICES.md" class="text-zinc-500 hover:text-brand-cyan transition-colors">notices</a>. Not officially affiliated.
       </p>
+      <p id="analytics-controls" class="text-xs text-zinc-700 mt-2" hidden>
+        <a href="/_analytics/privacy.html" class="text-zinc-500 hover:text-brand-cyan transition-colors">Privacy</a>
+        <button id="analytics-settings" type="button" data-fleet-analytics-settings class="ml-4 text-zinc-500 hover:text-brand-cyan transition-colors" hidden>Analytics settings</button>
+      </p>
     </div>
   </footer>
+
+  <!-- Analytics: only omp.wolfie.gg serves the consent-gated fleet loader and its
+       privacy notice from the same origin (/_analytics/*). Every other copy of this
+       page, including the GitHub Pages fallback, loads nothing and keeps the
+       footer controls hidden. The controls carry no Tailwind display class,
+       because one would override their hidden attribute. -->
+  <script>
+    if (location.hostname === 'omp.wolfie.gg') {
+      document.getElementById('analytics-controls').hidden = false;
+      const loader = document.createElement('script');
+      loader.src = '/_analytics/fleet.js';
+      // fleet.js publishes window.fleetAnalytics; its own floating settings button
+      // stays hidden while this footer button exists, so reveal it only when loaded.
+      loader.addEventListener('load', () => {
+        if (window.fleetAnalytics) document.getElementById('analytics-settings').hidden = false;
+      });
+      document.head.appendChild(loader);
+    }
+  </script>
 
   <!-- Scripts -->
   <script>

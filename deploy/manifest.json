@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "site_id": "omp.wolfie.gg",
+  "hosts": ["omp.wolfie.gg"],
+  "source": {
+    "repository": "https://github.com/wolfiesch/omp-episodic-memory",
+    "published_directory": "docs/",
+    "baseline_revision": "c00c76849f7fa4552fa3e59bab09e479912db6bf",
+    "baseline_docs_last_changed": "67c4bcc553dad6535e42749c16775d66a48841a6",
+    "baseline_matches_live_pages": "all five files served by wolfiesch.github.io/omp-episodic-memory/ were byte-identical to baseline_revision:docs/ on 2026-10-22",
+    "baseline_sha256": {
+      "THIRD_PARTY_NOTICES.md": "c0d889d4005878f0b9be956b562b49a0557e492db6f51c0fc72dfe1064c11ffc",
+      "favicon.svg": "689cb1d4e3847cd9a188da9828132e69921cf83357c95e0ab80d804a49508ca0",
+      "index.html": "97b19f70136231b02afd4a12dc5596c59bcaadbd7c89948456efb1069151b83e",
+      "og-image-card.html": "67ecb423bc78a4f2ebbc1bc318f4afc54cdb8b5670e303f2c518e10b9c6151c7",
+      "og-image.png": "6b5719e7d0f21dcf3d437a9f614caa8e0726add30e363800eb2974249af81770"
+    },
+    "release_revision": "first 12 hex characters of the deployed commit: the directory name ompdocs-releases/<rev> that the ompdocs symlink points to (deploy/release.sh status); REVISION records the full commit and the docs/ tree id"
+  },
+  "build": {
+    "toolchain": "none (git, tar, sha256sum or shasum)",
+    "input": "git archive of docs/ at the release commit into a temporary directory; the working tree is never used",
+    "output": "the five published files, unchanged",
+    "script": "deploy/release.sh build [REV]"
+  },
+  "serving": {
+    "kind": "static",
+    "edge": "existing shared Caddy 2.8.4 edge container (compose service caddy, image caddy:2.8)",
+    "container": null,
+    "container_port": null,
+    "public_ports_added": [],
+    "dns_change": "none: omp.wolfie.gg already resolves to the edge host (A record only, no proxy), which holds its certificate",
+    "caddy_fragment": "deploy/ompdocs.caddy",
+    "caddy_marker": "ompdocs",
+    "replaces_edge_block": {
+      "marker": "wolfie-platform-lab:omp",
+      "owner_source": "wolfiesch/wolfie-platform-lab ops/caddy/omp.Caddyfile, last changed in ac920e2ff26cdf60dc4b8ec4eb14b070315e3abf",
+      "block_sha256": "a8a9c6f5e18ff2fe82bb11317e0c661b45e0aec49bb5a94b22c796914bc2050b",
+      "block_sha256_note": "sha256 of the lines from `# BEGIN wolfie-platform-lab:omp` to `# END wolfie-platform-lab:omp`, each newline-terminated; the live edge block and the owner source were byte-identical on 2026-10-22",
+      "behavior": "reverse_proxy to the K3s Caddy service, which answers every path with 302 to https://wolfiesch.github.io/omp-episodic-memory/<path>, query kept",
+      "rollback_source": "the edge Caddyfile backup taken before cutover (deploy/release.sh edge-rollback IN OUT SOURCE); the owner fragment is also at wolfie-platform-lab `git show 9b5af5e:ops/caddy/omp.Caddyfile`"
+    },
+    "docroot_in_edge_container": "/srv/static/ompdocs",
+    "release_layout": {
+      "active": "<static root>/ompdocs -> ompdocs-releases/<rev> (relative symlink)",
+      "releases": "<static root>/ompdocs-releases/<rev>/",
+      "checksums": "<static root>/ompdocs-releases/<rev>.sha256 (outside the docroot)"
+    },
+    "spa_fallback": false,
+    "response_headers": {
+      "Cache-Control": "max-age=600",
+      "Access-Control-Allow-Origin": "*",
+      "Strict-Transport-Security": "max-age=31556952",
+      "Content-Security-Policy": "none, as on GitHub Pages: the page runs the Tailwind Play CDN, inline configuration and inline scripts"
+    }
+  },
+  "env": {
+    "runtime": [],
+    "deploy": ["OMPDOCS_DEPLOY_HOST", "OMPDOCS_STATIC_ROOT", "OMPDOCS_EDGE_CADDYFILE", "OMPDOCS_RELEASE_DIR"],
+    "smoke": ["OMPDOCS_RELEASE_DIR"]
+  },
+  "routes": [
+    { "path": "/", "status": 200, "content_type": "text/html", "note": "single-page landing; section links are #fragments" },
+    { "path": "/index.html", "status": 200, "content_type": "text/html" },
+    { "path": "/favicon.svg", "status": 200, "content_type": "image/svg+xml", "loaded": "relative link from index.html" },
+    { "path": "/og-image.png", "status": 200, "content_type": "image/png", "loaded": "og:image and twitter:image (absolute https://omp.wolfie.gg/og-image.png)" },
+    { "path": "/og-image-card.html", "status": 200, "content_type": "text/html", "note": "source of the social card; published on GitHub Pages, no scripts, not linked" },
+    { "path": "/THIRD_PARTY_NOTICES.md", "status": 200, "content_type": "text/markdown; charset=utf-8", "loaded": "relative footer link from index.html" },
+    { "path": "/robots.txt, /sitemap.xml, /llms.txt", "status": 404, "note": "not published, same as GitHub Pages" },
+    { "path": "any other path", "status": 404, "note": "GitHub Pages also answers 404; its HTML error page is not reproduced" }
+  ],
+  "external_runtime_dependencies": [
+    { "origin": "https://cdn.tailwindcss.com", "purpose": "Tailwind Play CDN script" },
+    { "origin": "https://fonts.googleapis.com", "purpose": "Outfit and JetBrains Mono stylesheet" },
+    { "origin": "https://fonts.gstatic.com", "purpose": "font files" },
+    { "origin": "https://img.shields.io", "purpose": "footer badges" }
+  ],
+  "analytics": {
+    "mode": "browser",
+    "integration": "hostname-gated source hook in docs/index.html: on omp.wolfie.gg only, an inline script inserts /_analytics/fleet.js once and reveals the footer privacy controls; every other host of the file (the GitHub Pages copy) loads nothing",
+    "loader": "/_analytics/fleet.js",
+    "privacy_notice": "/_analytics/privacy.html",
+    "settings_control": "footer button with data-fleet-analytics-settings, shown once fleet.js has loaded",
+    "caddy_imports": ["wolfsuite_fleet_log", "wolfsuite_fleet_routes"],
+    "browser_paths": ["/", "/index.html"],
+    "site_deny_paths": [],
+    "custom_events": [],
+    "not_collected": "the #fragment (section links rewrite it with history.replaceState), copied install or MCP config text, clicks; the page has no forms or inputs"
+  },
+  "registry_proposal": {
+    "owner": "the analytics registry maintainer; apply together with the edge cutover",
+    "until_cutover": "keep request-only coverage for omp.wolfie.gg and no analytics on the GitHub Pages fallback",
+    "at_cutover": {
+      "mode": "browser",
+      "paths": ["/", "/index.html", "/favicon.svg", "/og-image.png", "/og-image-card.html", "/THIRD_PARTY_NOTICES.md", "/robots.txt", "/sitemap.xml", "/llms.txt"],
+      "origin": "the existing edge host",
+      "rollback_copy": "keep analytics disabled on wolfiesch.github.io; the hostname-gated hook remains inert",
+      "coordination": "update the shared analytics registration with the edge cutover so browser routes remain enabled for the new docs block"
+    }
+  },
+  "owner_hazards": [
+    {
+      "owner": "wolfiesch/wolfie-platform-lab scripts/deploy-caddy-k8s-health.sh",
+      "effect": "without the fix: deletes every `# BEGIN wolfie-platform-lab:` block and any top-level `omp.wolfie.gg {` block, reducing the ompdocs block to bare marker lines, then appends ops/caddy/*.Caddyfile, which reinstates the omp redirect",
+      "fix": {
+        "branch": "fix/retire-omp-edge-fragment",
+        "pull_request": "https://github.com/wolfiesch/wolfie-platform-lab/pull/3",
+        "changes": [
+          "delete ops/caddy/omp.Caddyfile",
+          "legacy site regex ^(k8s-health|omp|freakoff)[.]wolfie[.]gg becomes ^(k8s-health|freakoff)[.]wolfie[.]gg; omp redirect comment strip removed",
+          "guard: exit 1 before writing unless exactly one ordered `# BEGIN ompdocs` / `# END ompdocs` pair contains the `omp.wolfie.gg {` site"
+        ],
+        "unchanged": "K3s Caddy config, including the omp redirect"
+      },
+      "required_order": "merge the fix before cutover; between the merge and the edge swap its deploy fails closed and changes nothing",
+      "residual_hazard": "running the deploy script from any checkout without the fix after cutover still destroys the ompdocs block",
+      "rollback": "after edge-rollback, revert the whole fix commit (the guard refuses while no ompdocs block exists); restoring omp.Caddyfile alone is not enough",
+      "detection": "deploy/release.sh status with OMPDOCS_EDGE_CADDYFILE reports which block is live"
+    }
+  ],
+  "health_probes": [
+    { "command": "deploy/smoke.sh --release <rev>", "checks": "document headers and hook, every published file byte-for-byte, 404 contract, analytics routes" },
+    { "command": "deploy/smoke.sh --fallback", "checks": "GitHub Pages rollback copy serves the published files, 404s unknown paths and loads no analytics route" },
+    { "request": "GET /", "expect": { "status": 200, "content_type": "text/html", "server": "Caddy" } },
+    { "request": "GET /og-image.png", "expect": { "status": 200, "content_type": "image/png" } },
+    { "request": "GET /some/deep/link", "expect": { "status": 404 } },
+    { "request": "GET /_analytics/fleet.js", "expect": { "status": 200 } }
+  ]
+}
