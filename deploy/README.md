@@ -90,8 +90,8 @@ All checks are read-only.
    - deletes `ops/caddy/omp.Caddyfile`;
    - narrows the legacy site pattern to `^(k8s-health|freakoff)[.]wolfie[.]gg` and drops the
      omp comment strip;
-   - adds a guard: the deploy exits 1 before writing unless the result holds exactly one
-     `# BEGIN ompdocs` and one `# END ompdocs`.
+   - require exactly one ordered `# BEGIN ompdocs` / `# END ompdocs` pair with the
+     `omp.wolfie.gg {` site inside it; refuse before writing otherwise.
 
    Merge it before cutover. Its K3s Caddy configuration, including the omp redirect, stays
    untouched for rollback. Running the deploy script from any checkout without the fix still
@@ -164,10 +164,10 @@ cat candidate.Caddyfile > "$EDGE_CADDYFILE"
 docker exec "$EDGE_CADDY_CONTAINER" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
 ```
 
-`edge-candidate` copies every other line unchanged. It refuses unless the input holds exactly
-one of the `wolfie-platform-lab:omp` and `ompdocs` blocks, and unless the result defines
-`omp.wolfie.gg` exactly once. Running it on an already-cut-over file reproduces that file. The
-diff it prints must show only the block swap.
+Use `edge-candidate` to replace only the documentation-owned block. The input must hold exactly
+one complete, correctly ordered `wolfie-platform-lab:omp` or `ompdocs` block, and the result must
+define `omp.wolfie.gg` exactly once. Repeated cutovers produce identical output. Inspect the
+printed diff for the block swap and verify that every unrelated line remains unchanged.
 
 Order:
 

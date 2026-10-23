@@ -108,7 +108,7 @@
         "changes": [
           "delete ops/caddy/omp.Caddyfile",
           "legacy site regex ^(k8s-health|omp|freakoff)[.]wolfie[.]gg becomes ^(k8s-health|freakoff)[.]wolfie[.]gg; omp redirect comment strip removed",
-          "guard: exit 1 before writing unless the result holds exactly one `# BEGIN ompdocs` and one `# END ompdocs`"
+          "guard: exit 1 before writing unless exactly one ordered `# BEGIN ompdocs` / `# END ompdocs` pair contains the `omp.wolfie.gg {` site"
         ],
         "unchanged": "K3s Caddy config, including the omp redirect"
       },

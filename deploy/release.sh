@@ -271,6 +271,7 @@ swap_edge_block() {
   marker=${found[0]}
   [[ $(grep -c -x -F "# BEGIN $marker" "$in") == 1 && $(grep -c -x -F "# END $marker" "$in") == 1 ]] ||
     die "$in has an unbalanced '$marker' block"
+  marked_block "$in" "$marker" >/dev/null
 
   local block
   block=$(marked_block "$fragment" "$want")
