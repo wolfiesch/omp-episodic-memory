@@ -1,0 +1,37 @@
+# omp.wolfie.gg site block for the shared edge Caddy (2.8.4): the docs/ landing
+# page, served from the edge's static root instead of the current chain
+# (edge -> K3s Caddy -> 302 to wolfiesch.github.io/omp-episodic-memory/).
+#
+# `deploy/release.sh edge-candidate` swaps the marked block below in for the
+# `wolfie-platform-lab:omp` block; `deploy/release.sh edge-rollback` swaps that
+# block back from the pre-cutover backup. See deploy/README.md for the order,
+# the wolfie-platform-lab prerequisite, validation and rollback. Requires the
+# wolfsuite_fleet_log and wolfsuite_fleet_routes snippets from the shared
+# analytics configuration earlier in the same file.
+#
+# /srv/static/ompdocs is a relative symlink to ompdocs-releases/<rev>, switched
+# atomically by deploy/release.sh. The response contract follows the GitHub
+# Pages site: the five published docs/ files are served at the root, every
+# other path is a 404 (no SPA fallback, no directory listing), and responses
+# carry the same Cache-Control, CORS and HSTS values. The fleet imports come
+# first, so /_analytics/* is answered before the file server sees the request.
+
+# BEGIN ompdocs
+omp.wolfie.gg {
+	import wolfsuite_fleet_log
+	import wolfsuite_fleet_routes
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31556952"
+
+	handle {
+		root * /srv/static/ompdocs
+		header {
+			Cache-Control "max-age=600"
+			Access-Control-Allow-Origin "*"
+		}
+		# Go has no built-in type for .md; keep the type GitHub Pages serves.
+		header /THIRD_PARTY_NOTICES.md Content-Type "text/markdown; charset=utf-8"
+		file_server
+	}
+}
+# END ompdocs
